@@ -914,7 +914,10 @@ function rPlay() {
               </div>
               ${isMyTurn?`<div class="arow">
                 <textarea id="ainp" placeholder="What does ${esc(me?.char?.name||S.myName)} do?" rows="2">${esc(S.inputText)}</textarea>
-                <button class="btn-declare" id="bdecl">Declare</button>
+                <div class="declare-btns">
+                  <button class="btn-declare" id="bdecl">Declare</button>
+                  <button class="btn-bonus ${(camp.players.find(p=>p.name===S.myName)?.sheet?.bonusAction)?"btn-bonus-used":""}" id="bdecl-bonus" title="Declare action and use Bonus Action">+ Bonus</button>
+                </div>
               </div>
               ${S.pendingSpell?`<div class="spell-popup">
                 <div class="sp-title">🔮 Casting ${esc(S.pendingSpell.spell)} — choose slot level:</div>
@@ -973,7 +976,7 @@ function rPlay() {
 
   // Spell slot popup handlers
   qall(".sp-slot-btn").forEach(btn=>{
-    btn.onclick=()=>{ submitAction(btn.dataset.lvl); };
+    btn.onclick=()=>{ submitAction(btn.dataset.lvl, S.pendingSpell?.useBonusAction||false); };
   });
   const spCancel=document.querySelector(".sp-cancel");
   if(spCancel) spCancel.onclick=()=>{ S.pendingSpell=null; rPlay(); };
@@ -989,7 +992,8 @@ function rPlay() {
   }
   const ai=id("ainp");
   if(ai){ ai.oninput=e=>S.inputText=e.target.value; ai.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();submitAction();}}; ai.focus(); }
-  const bd=id("bdecl"); if(bd) bd.onclick=submitAction;
+  const bd=id("bdecl"); if(bd) bd.onclick=()=>submitAction(undefined, false);
+  const bdb=id("bdecl-bonus"); if(bdb) bdb.onclick=()=>submitAction(undefined, true);
 
   // Retry button
   qall(".btn-retry").forEach(btn => {
@@ -1180,7 +1184,7 @@ function detectSpellUse(action, knownSpells) {
   return knownSpells.find(s => lower.includes(s.toLowerCase())) || null;
 }
 
-async function submitAction(confirmedSlot) {
+async function submitAction(confirmedSlot, useBonusAction=false) {
   if(S.submitting) return;
   const action=S.inputText.trim(); if(!action) return;
 
@@ -1200,7 +1204,7 @@ async function submitAction(confirmedSlot) {
 
     if(detectedSpell && !isCantripOrNoSlots) {
       // Show slot selection popup
-      S.pendingSpell = { spell: detectedSpell, availLevels };
+      S.pendingSpell = { spell: detectedSpell, availLevels, useBonusAction };
       rPlay();
       return;
     }
@@ -1209,8 +1213,8 @@ async function submitAction(confirmedSlot) {
   S.inputText=""; S.submitting=true;
   S.pendingSpell=null;
 
-  // Auto-mark action used + spell slot if confirmed
-  let newSheet = { ...sheet, action: true };
+  // Auto-mark action used + bonus action if used + spell slot if confirmed
+  let newSheet = { ...sheet, action: true, bonusAction: useBonusAction ? true : sheet.bonusAction };
   if(confirmedSlot !== undefined && confirmedSlot !== null) {
     const used = { ...(sheet.spellSlotsUsed||{}) };
     used[confirmedSlot] = (used[confirmedSlot]||0)+1;
@@ -1403,6 +1407,10 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 #ainp:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(201,168,76,.2)}
 .btn-declare{background:linear-gradient(135deg,var(--blood) 0%,#6b1414 100%);color:var(--p0);border:1px solid #6b1414;border-radius:2px;padding:.42rem .85rem;font-family:'Cinzel',serif;font-size:.57rem;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;transition:all .2s;white-space:nowrap}
 .btn-declare:hover{background:linear-gradient(135deg,#a02020 0%,var(--blood) 100%)}
+.declare-btns{display:flex;flex-direction:column;gap:.3rem;flex-shrink:0}
+.btn-bonus{background:linear-gradient(135deg,#4a3a6b,#2e2044);color:#c0a8e8;border:1px solid #6b4c8b;border-radius:2px;padding:.42rem .7rem;font-family:'Cinzel',serif;font-size:.55rem;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:all .2s;white-space:nowrap}
+.btn-bonus:hover{background:linear-gradient(135deg,#6b4c8b,#4a3a6b);box-shadow:0 2px 8px rgba(107,76,139,.4)}
+.btn-bonus-used{opacity:.45;cursor:not-allowed}
 .btn-retry{display:inline-block;margin-top:.5rem;background:rgba(139,26,26,.12);border:1px solid var(--blood);color:var(--blood);border-radius:2px;padding:.25rem .7rem;font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:all .2s}
 .btn-retry:hover{background:rgba(139,26,26,.25)}
 
