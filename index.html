@@ -142,6 +142,111 @@ function xpToLevel(xp) {
 }
 function xpForNext(level) { return XP_THRESHOLDS[level] || null; }
 
+// ── WEAPON & ACTION DATA ──────────────────────────────────────────────────────
+const WEAPON_DAMAGE = {
+  // Simple melee
+  "dagger":           { dmg:"1d4",  type:"piercing",  prop:"finesse, light, thrown (20/60)",  ability:"STR/DEX" },
+  "handaxe":          { dmg:"1d6",  type:"slashing",  prop:"light, thrown (20/60)",            ability:"STR" },
+  "javelin":          { dmg:"1d6",  type:"piercing",  prop:"thrown (30/120)",                  ability:"STR" },
+  "mace":             { dmg:"1d6",  type:"bludgeoning",prop:"",                                ability:"STR" },
+  "quarterstaff":     { dmg:"1d6",  type:"bludgeoning",prop:"versatile (1d8)",                 ability:"STR" },
+  "spear":            { dmg:"1d6",  type:"piercing",  prop:"thrown (20/60), versatile (1d8)",  ability:"STR" },
+  "greatclub":        { dmg:"1d8",  type:"bludgeoning",prop:"two-handed",                      ability:"STR" },
+  // Simple ranged
+  "light crossbow":   { dmg:"1d8",  type:"piercing",  prop:"range (80/320), two-handed",       ability:"DEX" },
+  "shortbow":         { dmg:"1d6",  type:"piercing",  prop:"range (80/320), two-handed",       ability:"DEX" },
+  // Martial melee
+  "longsword":        { dmg:"1d8",  type:"slashing",  prop:"versatile (1d10)",                 ability:"STR" },
+  "shortsword":       { dmg:"1d6",  type:"piercing",  prop:"finesse, light",                   ability:"STR/DEX" },
+  "rapier":           { dmg:"1d8",  type:"piercing",  prop:"finesse",                          ability:"STR/DEX" },
+  "scimitar":         { dmg:"1d6",  type:"slashing",  prop:"finesse, light",                   ability:"STR/DEX" },
+  "greatsword":       { dmg:"2d6",  type:"slashing",  prop:"heavy, two-handed",                ability:"STR" },
+  "greataxe":         { dmg:"1d12", type:"slashing",  prop:"heavy, two-handed",                ability:"STR" },
+  "battleaxe":        { dmg:"1d8",  type:"slashing",  prop:"versatile (1d10)",                 ability:"STR" },
+  "warhammer":        { dmg:"1d8",  type:"bludgeoning",prop:"versatile (1d10)",                ability:"STR" },
+  "flail":            { dmg:"1d8",  type:"bludgeoning",prop:"",                                ability:"STR" },
+  "morningstar":      { dmg:"1d8",  type:"piercing",  prop:"",                                 ability:"STR" },
+  "glaive":           { dmg:"1d10", type:"slashing",  prop:"heavy, reach, two-handed",         ability:"STR" },
+  "halberd":          { dmg:"1d10", type:"slashing",  prop:"heavy, reach, two-handed",         ability:"STR" },
+  "pike":             { dmg:"1d10", type:"piercing",  prop:"heavy, reach, two-handed",         ability:"STR" },
+  // Martial ranged
+  "longbow":          { dmg:"1d8",  type:"piercing",  prop:"range (150/600), two-handed",      ability:"DEX" },
+  "hand crossbow":    { dmg:"1d6",  type:"piercing",  prop:"range (30/120), light",            ability:"DEX" },
+  "heavy crossbow":   { dmg:"1d10", type:"piercing",  prop:"range (100/400), heavy, two-handed",ability:"DEX" },
+  // Special
+  "unarmed strike":   { dmg:"1",    type:"bludgeoning",prop:"",                                ability:"STR" },
+  "shillelagh":       { dmg:"1d8",  type:"bludgeoning",prop:"(druid cantrip)",                 ability:"WIS" },
+};
+
+const CLASS_BONUS_ACTIONS = {
+  Fighter:   ["Second Wind (heal 1d10+level, 1/rest)"],
+  Wizard:    [],
+  Rogue:     ["Cunning Action: Dash, Disengage, or Hide"],
+  Cleric:    [],
+  Ranger:    ["Hunter's Mark (cast as bonus action)","Steady Aim (if not moved, gain advantage)"],
+  Paladin:   [],
+  Bard:      ["Bardic Inspiration (give d6 to ally within 60ft)"],
+  Druid:     ["Wild Shape (transform into CR 1/4 beast, 2/rest)"],
+  Barbarian: ["Rage (enter rage — +2 damage, resistance to B/P/S, 2/rest)"],
+  Warlock:   [],
+};
+
+const CLASS_REACTIONS = {
+  Fighter:   ["Opportunity Attack"],
+  Wizard:    ["Shield (+5 AC until next turn, reaction to being hit)","Counterspell (negate a spell, reaction)","Opportunity Attack"],
+  Rogue:     ["Uncanny Dodge (halve damage from attacker you can see)","Opportunity Attack"],
+  Cleric:    ["Opportunity Attack"],
+  Ranger:    ["Opportunity Attack"],
+  Paladin:   ["Divine Smite (after hitting, expend spell slot for 2d8 radiant per slot level)","Opportunity Attack"],
+  Bard:      ["Opportunity Attack"],
+  Druid:     ["Opportunity Attack"],
+  Barbarian: ["Opportunity Attack"],
+  Warlock:   ["Opportunity Attack"],
+};
+
+function getWeaponActions(inventory, stats, cls) {
+  const actions = [];
+  const profBonus = 2;
+
+  // Check inventory for weapons
+  (inventory||[]).forEach(item => {
+    const lower = item.toLowerCase().replace(/\s*\(.*?\)/g,"").trim();
+    // Find matching weapon
+    const key = Object.keys(WEAPON_DAMAGE).find(w => lower.includes(w));
+    if(key) {
+      const w = WEAPON_DAMAGE[key];
+      const abilityMod = w.ability.includes("DEX") && w.ability.includes("STR")
+        ? Math.max(mod(stats.STR), mod(stats.DEX))
+        : w.ability.includes("DEX") ? mod(stats.DEX)
+        : w.ability.includes("WIS") ? mod(stats.WIS)
+        : mod(stats.STR);
+      const hitBonus = abilityMod + profBonus;
+      const dmgBonus = abilityMod;
+      actions.push({
+        name: key.charAt(0).toUpperCase()+key.slice(1),
+        type: "action",
+        hit: hitBonus>=0?`+${hitBonus}`:`${hitBonus}`,
+        dmg: `${w.dmg}${dmgBonus>=0?`+${dmgBonus}`:`${dmgBonus}`}`,
+        dmgType: w.type,
+        prop: w.prop,
+      });
+    }
+  });
+
+  // Always add unarmed strike
+  const strMod = mod(stats.STR);
+  actions.push({
+    name:"Unarmed Strike",
+    type:"action",
+    hit: strMod+profBonus>=0?`+${strMod+profBonus}`:`${strMod+profBonus}`,
+    dmg:`1${strMod>=0?`+${strMod}`:`${strMod}`}`,
+    dmgType:"bludgeoning",
+    prop:"",
+  });
+
+  return actions;
+}
+
 // ── STATE ────────────────────────────────────────────────────────────────────
 // Restore session from localStorage so refresh doesn't log you out
 const _saved = (() => { try { return JSON.parse(localStorage.getItem("chronicle_session")||"{}"); } catch(e){ return {}; } })();
@@ -758,6 +863,13 @@ function combatTab(c, me, sheet) {
   const used = sheet.spellSlotsUsed || {};
   const slots= c.spellSlots || {};
   const hasSlots = Object.keys(slots).length>0;
+  const weaponActions = getWeaponActions(sheet.inventory||[], c.stats, c.cls);
+  const bonusActions  = CLASS_BONUS_ACTIONS[c.cls]||[];
+  const reactions     = CLASS_REACTIONS[c.cls]||[];
+  // Spell actions — non-cantrip spells from sheet
+  const cantrips = (c.cantrips||[]);
+  const spellActions = (sheet.spells||[]).filter(s=>cantrips.includes(s));
+  const nonCantripSpells = (sheet.spells||[]).filter(s=>!cantrips.includes(s)).slice(0,6);
 
   return `
     <div class="combat-stats">
@@ -782,9 +894,45 @@ function combatTab(c, me, sheet) {
       </div>
       <button class="btn-rest" id="btn-rest">🌙 Short/Long Rest — Reset All</button>
     </div>
+
+    <!-- ACTIONS -->
+    <div class="action-section">
+      <div class="slots-lbl">⚔ Actions</div>
+      ${weaponActions.map(a=>`
+        <div class="action-row-item">
+          <div class="act-name">${esc(a.name)}</div>
+          <div class="act-detail"><span class="act-hit">${a.hit} to hit</span> · <span class="act-dmg">${a.dmg} ${a.dmgType}</span>${a.prop?` · <span class="act-prop">${esc(a.prop)}</span>`:""}</div>
+        </div>`).join("")}
+      ${cantrips.map(s=>`
+        <div class="action-row-item">
+          <div class="act-name">🔮 ${esc(s)}</div>
+          <div class="act-detail act-prop">Cantrip · Action</div>
+        </div>`).join("")}
+      ${nonCantripSpells.length?`
+        <div class="action-row-item">
+          <div class="act-name">📖 Cast Spell</div>
+          <div class="act-detail act-prop">${nonCantripSpells.slice(0,4).map(s=>esc(s)).join(", ")}${nonCantripSpells.length>4?` +${nonCantripSpells.length-4} more`:""}</div>
+        </div>`:""}
+    </div>
+
+    <!-- BONUS ACTIONS -->
+    ${bonusActions.length?`
+    <div class="action-section">
+      <div class="slots-lbl">⚡ Bonus Actions</div>
+      ${bonusActions.map(a=>`<div class="action-row-item"><div class="act-name act-bonus-name">${esc(a)}</div></div>`).join("")}
+    </div>`:""}
+
+    <!-- REACTIONS -->
+    ${reactions.length?`
+    <div class="action-section">
+      <div class="slots-lbl">🛡 Reactions</div>
+      ${reactions.map(a=>`<div class="action-row-item"><div class="act-name act-react-name">${esc(a)}</div></div>`).join("")}
+    </div>`:""}
+
+    <!-- SPELL SLOTS -->
     ${hasSlots?`
     <div class="slots-section">
-      <div class="slots-lbl">Spell Slots</div>
+      <div class="slots-lbl">✨ Spell Slots</div>
       ${Object.entries(slots).map(([lvl,total])=>{
         const usedN = used[lvl]||0;
         const avail = total-usedN;
@@ -796,12 +944,13 @@ function combatTab(c, me, sheet) {
         </div>`;
       }).join("")}
     </div>` : ""}
+
     <div class="conc-row">
       <span class="conc-lbl">Concentration:</span>
       <input class="conc-inp" id="conc-inp" placeholder="None" value="${esc(sheet.concentration||"")}"/>
     </div>
     <div class="feature-section">
-      <div class="slots-lbl">Class Features</div>
+      <div class="slots-lbl">★ Class Features</div>
       ${(c.features||[]).map(f=>`<div class="feature-item">✦ ${esc(f)}</div>`).join("")}
     </div>`;
 }
@@ -1675,6 +1824,18 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .sp-slot-btn:hover{background:linear-gradient(135deg,var(--gold2),var(--gold));box-shadow:0 2px 8px rgba(201,168,76,.4)}
 .sp-cancel{background:transparent;border:1px solid var(--p2);border-radius:2px;padding:.3rem .6rem;font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;color:var(--ink);opacity:.6;transition:opacity .15s}
 .sp-cancel:hover{opacity:1}
+
+/* ── ACTION LIST ── */
+.action-section{margin:.5rem 0}
+.action-row-item{padding:.28rem .35rem;border-radius:2px;margin-bottom:.18rem;background:rgba(255,255,255,.18);border:1px solid var(--p2);transition:background .15s}
+.action-row-item:hover{background:rgba(255,255,255,.28)}
+.act-name{font-family:'Cinzel',serif;font-size:.65rem;font-weight:600;color:var(--ink);letter-spacing:.05em}
+.act-bonus-name{color:#6b4c8b}
+.act-react-name{color:#2e6b8b}
+.act-detail{font-size:.68rem;color:#5a3520;margin-top:.08rem;line-height:1.3}
+.act-hit{color:var(--green);font-family:'Cinzel',serif;font-size:.62rem}
+.act-dmg{color:var(--blood);font-family:'Cinzel',serif;font-size:.62rem}
+.act-prop{opacity:.6;font-style:italic;font-size:.6rem}
 </style>
 </head>
 <body><div id="root"></div></body>
