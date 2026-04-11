@@ -121,6 +121,27 @@ const calcHp  = (cls,con) => (CLASS_HP[cls]||8)+mod(con);
 const genCode = () => Math.random().toString(36).substring(2,8).toUpperCase();
 const esc     = s => s ? String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br/>") : "";
 
+// ── XP & LEVELING ─────────────────────────────────────────────────────────────
+const XP_THRESHOLDS = [0,300,900,2700,6500,14000,23000,34000,48000,64000];
+const SPELL_SLOTS_BY_LEVEL = {
+  Wizard:  [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2},{1:4,2:3,3:3},{1:4,2:3,3:3,4:1},{1:4,2:3,3:3,4:2},{1:4,2:3,3:3,4:3,5:1}],
+  Bard:    [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2},{1:4,2:3,3:3},{1:4,2:3,3:3,4:1},{1:4,2:3,3:3,4:2},{1:4,2:3,3:3,4:3,5:1}],
+  Cleric:  [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2},{1:4,2:3,3:3},{1:4,2:3,3:3,4:1},{1:4,2:3,3:3,4:2},{1:4,2:3,3:3,4:3,5:1}],
+  Druid:   [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2},{1:4,2:3,3:3},{1:4,2:3,3:3,4:1},{1:4,2:3,3:3,4:2},{1:4,2:3,3:3,4:3,5:1}],
+  Warlock: [{},{1:1},{1:2},{1:2},{1:2},{1:2,2:2},{1:2,2:2},{1:2,2:2,3:2},{1:2,2:2,3:2},{1:2,2:2,3:2,4:2}],
+  Paladin: [{},{},{1:2},{1:3},{1:3,2:1},{1:3,2:2},{1:3,2:2,3:1},{1:3,2:2,3:2},{1:3,2:2,3:3,4:1},{1:3,2:2,3:3,4:2}],
+  Ranger:  [{},{},{1:2},{1:3},{1:3,2:1},{1:3,2:2},{1:3,2:2,3:1},{1:3,2:2,3:2},{1:3,2:2,3:3,4:1},{1:3,2:2,3:3,4:2}],
+  Fighter: [{},{},{},{},{},{},{},{},{},{}],
+  Rogue:   [{},{},{},{},{},{},{},{},{},{}],
+  Barbarian:[{},{},{},{},{},{},{},{},{},{}],
+};
+
+function xpToLevel(xp) {
+  for(let i=XP_THRESHOLDS.length-1;i>=0;i--) { if(xp>=XP_THRESHOLDS[i]) return i+1; }
+  return 1;
+}
+function xpForNext(level) { return XP_THRESHOLDS[level] || null; }
+
 // ── STATE ────────────────────────────────────────────────────────────────────
 // Restore session from localStorage so refresh doesn't log you out
 const _saved = (() => { try { return JSON.parse(localStorage.getItem("chronicle_session")||"{}"); } catch(e){ return {}; } })();
@@ -139,6 +160,7 @@ let S = {
   submitting: false,
   sheetOpen:  false,
   sheetTab:   "inventory",
+  pendingSpell: null,
 };
 
 
@@ -190,7 +212,12 @@ RULES:
 - When rolls are needed, name the player and die explicitly (e.g. "Roll a d20 for Stealth, ${cur?.name}.").
 - Let choices have real weight — good ideas succeed, recklessness backfires.
 - Keep all players engaged through vivid narration even when it's not their turn.
-- Classic fantasy tone: dungeons, intrigue, wonder, moral weight, memorable NPCs.`;
+- Classic fantasy tone: dungeons, intrigue, wonder, moral weight, memorable NPCs.
+
+XP AWARDS:
+After your narrative, append a JSON block on its own line in this exact format (no markdown):
+XP_AWARD:{"xp":0,"reason":""}
+Award XP only when something meaningful happens: defeating enemies (10-200 XP), solving puzzles (25-100 XP), major story milestones (50-500 XP), clever roleplay (10-50 XP). Award 0 for normal conversation/movement. Split XP equally among all players.`;
 }
 
 const PROXY = "https://dnd-proxy.onrender.com";
@@ -203,10 +230,19 @@ fetch(`${PROXY}/health`).catch(()=>{});
 async function callDM(system, history) {
   const res  = await fetch(`${PROXY}/api/dm`, {
     method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, system, messages:history })
+    body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1200, system, messages:history })
   });
   const data = await res.json();
-  return data.content?.[0]?.text || "...";
+  const raw  = data.content?.[0]?.text || "...";
+  // Parse XP award from response
+  const xpMatch = raw.match(/XP_AWARD:(\{.*?\})/);
+  let xpAward = 0, xpReason = "";
+  if(xpMatch) {
+    try { const j=JSON.parse(xpMatch[1]); xpAward=j.xp||0; xpReason=j.reason||""; } catch(e){}
+  }
+  // Strip XP JSON from displayed text
+  const text = raw.replace(/\nXP_AWARD:\{.*?\}/g,"").trim();
+  return { text, xpAward, xpReason };
 }
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
@@ -714,6 +750,14 @@ function combatTab(c, me, sheet) {
       <div class="cs-box"><div class="cs-lbl">Speed</div><div class="cs-val">${sheet.speed||"30ft"}</div></div>
       <div class="cs-box"><div class="cs-lbl">Prof</div><div class="cs-val">+2</div></div>
     </div>
+    <div class="xp-bar-wrap">
+      <div class="xp-row">
+        <span class="xp-lbl">Level ${me.level||1} ${esc(c.cls)}</span>
+        <span class="xp-val">${me.xp||0} XP ${xpForNext(me.level||1)?`/ ${xpForNext(me.level||1)}`:"(max)"}</span>
+      </div>
+      <div class="xp-track"><div class="xp-fill" style="width:${xpForNext(me.level||1)?Math.round(((me.xp||0)-XP_THRESHOLDS[(me.level||1)-1])/(xpForNext(me.level||1)-XP_THRESHOLDS[(me.level||1)-1])*100):100}%"></div></div>
+      ${me.levelUpPending?`<div class="levelup-banner">🎉 Level Up! Your HP and spell slots have been updated.</div>`:""}
+    </div>
     <div class="act-section">
       <div class="act-row">
         <label class="act-check"><input type="checkbox" id="chk-action" ${sheet.action?"checked":""}/><span>Action</span></label>
@@ -871,7 +915,15 @@ function rPlay() {
               ${isMyTurn?`<div class="arow">
                 <textarea id="ainp" placeholder="What does ${esc(me?.char?.name||S.myName)} do?" rows="2">${esc(S.inputText)}</textarea>
                 <button class="btn-declare" id="bdecl">Declare</button>
+              </div>
+              ${S.pendingSpell?`<div class="spell-popup">
+                <div class="sp-title">🔮 Casting ${esc(S.pendingSpell.spell)} — choose slot level:</div>
+                <div class="sp-btns">
+                  ${S.pendingSpell.availLevels.map(l=>`<button class="sp-slot-btn" data-lvl="${l}">Level ${l}</button>`).join("")}
+                  <button class="sp-cancel">Cancel</button>
+                </div>
               </div>`:""}
+              `:""}
             </div>
           </div>
         </section>
@@ -918,6 +970,23 @@ function rPlay() {
 
   const log=id("log"); if(log) log.scrollTop=log.scrollHeight;
   const bl=id("btn-leave"); if(bl) bl.onclick=()=>{ clearSession(); S.campaignId=null; S.myName=null; S.campaign=null; if(S.unsub){S.unsub();S.unsub=null;} go("landing"); };
+
+  // Spell slot popup handlers
+  qall(".sp-slot-btn").forEach(btn=>{
+    btn.onclick=()=>{ submitAction(btn.dataset.lvl); };
+  });
+  const spCancel=document.querySelector(".sp-cancel");
+  if(spCancel) spCancel.onclick=()=>{ S.pendingSpell=null; rPlay(); };
+
+  // Clear levelUpPending on dismiss
+  const me2=camp.players.find(p=>p.name===S.myName);
+  if(me2?.levelUpPending) {
+    setTimeout(async()=>{
+      const c2=S.campaign; if(!c2) return;
+      const players=c2.players.map(p=>p.name===S.myName?{...p,levelUpPending:false}:p);
+      await patch(S.campaignId,{players});
+    }, 4000);
+  }
   const ai=id("ainp");
   if(ai){ ai.oninput=e=>S.inputText=e.target.value; ai.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();submitAction();}}; ai.focus(); }
   const bd=id("bdecl"); if(bd) bd.onclick=submitAction;
@@ -1101,24 +1170,95 @@ function msgHtml(m) {
   }
   if(m.type==="player") return `<div class="mpl"><div class="mlbl">↳ ${esc(m.who)}</div>${esc(m.text)}</div>`;
   if(m.type==="roll")   return `<div class="mroll">🎲 ${esc(m.text)}</div>`;
+  if(m.type==="xp")     return `<div class="msg-xp">✦ ${esc(m.text)}</div>`;
   return "";
 }
 
-async function submitAction() {
+function detectSpellUse(action, knownSpells) {
+  if(!knownSpells || !knownSpells.length) return null;
+  const lower = action.toLowerCase();
+  return knownSpells.find(s => lower.includes(s.toLowerCase())) || null;
+}
+
+async function submitAction(confirmedSlot) {
   if(S.submitting) return;
   const action=S.inputText.trim(); if(!action) return;
-  S.inputText=""; S.submitting=true; rPlay();
+
   const camp=S.campaign;
+  const me=camp.players.find(p=>p.name===S.myName);
+  const sheet=me?.sheet||{};
+  const char=me?.char||{};
+
+  // Spell slot detection — if a spell is detected and no slot confirmed yet, show popup
+  if(confirmedSlot===undefined) {
+    const detectedSpell = detectSpellUse(action, sheet.spells||[]);
+    const slots = char.spellSlots||{};
+    const usedSlots = sheet.spellSlotsUsed||{};
+    const availLevels = Object.entries(slots).filter(([l,t])=>(usedSlots[l]||0)<t).map(([l])=>l);
+    const isCantripOrNoSlots = !detectedSpell || !availLevels.length ||
+      (char.cantrips||[]).map(c=>c.toLowerCase()).some(c=>action.toLowerCase().includes(c));
+
+    if(detectedSpell && !isCantripOrNoSlots) {
+      // Show slot selection popup
+      S.pendingSpell = { spell: detectedSpell, availLevels };
+      rPlay();
+      return;
+    }
+  }
+
+  S.inputText=""; S.submitting=true;
+  S.pendingSpell=null;
+
+  // Auto-mark action used + spell slot if confirmed
+  let newSheet = { ...sheet, action: true };
+  if(confirmedSlot !== undefined && confirmedSlot !== null) {
+    const used = { ...(sheet.spellSlotsUsed||{}) };
+    used[confirmedSlot] = (used[confirmedSlot]||0)+1;
+    newSheet.spellSlotsUsed = used;
+  }
+
+  // Reset next player's actions
+  const nextIdx = (camp.turnIndex+1)%camp.players.length;
+  const players = camp.players.map((p,i) => {
+    if(p.name===S.myName) return {...p, sheet:newSheet};
+    if(i===nextIdx) return {...p, sheet:{...(p.sheet||{}), action:false, bonusAction:false, reaction:false}};
+    return p;
+  });
+
+  rPlay();
+
   const pm={type:"player",text:action,who:S.myName,ts:Date.now()};
   const nm=[...camp.messages,pm];
   const ue={role:"user",content:`${S.myName}: ${action}`};
   const nh=[...(camp.aiHistory||[]),ue];
-  await patch(S.campaignId,{messages:nm,aiHistory:nh});
+  await patch(S.campaignId,{messages:nm,aiHistory:nh,players});
   try {
-    const txt=await callDM(buildSystem(camp),nh);
-    const dm={type:"dm",text:txt,ts:Date.now()};
-    const ni=(camp.turnIndex+1)%camp.players.length;
-    await patch(S.campaignId,{messages:[...nm,dm],aiHistory:[...nh,{role:"assistant",content:txt}],turnIndex:ni});
+    const result=await callDM(buildSystem({...camp,players}),nh);
+    const dm={type:"dm",text:result.text,ts:Date.now()};
+    const ni=nextIdx;
+
+    // Award XP to all players
+    let updatedPlayers = [...players];
+    if(result.xpAward>0) {
+      updatedPlayers = updatedPlayers.map(p => {
+        const newXp = (p.xp||0)+result.xpAward;
+        const oldLevel = xpToLevel(p.xp||0);
+        const newLevel = xpToLevel(newXp);
+        if(newLevel>oldLevel) {
+          // Level up! Recalc HP and spell slots
+          const newMaxHp = (CLASS_HP[p.char?.cls]||8)*newLevel + mod(p.char?.stats?.CON||10)*newLevel;
+          const newSlots = (SPELL_SLOTS_BY_LEVEL[p.char?.cls]||[])[newLevel-1]||{};
+          return {...p, xp:newXp, level:newLevel, maxHp:newMaxHp, hp:Math.min(p.hp||0,newMaxHp),
+            char:{...p.char, spellSlots:newSlots}, levelUpPending:true};
+        }
+        return {...p, xp:newXp};
+      });
+      // Add XP notification to messages
+      const xpMsg={type:"xp",text:`+${result.xpAward} XP awarded — ${result.xpReason}`,ts:Date.now()};
+      await patch(S.campaignId,{messages:[...nm,dm,xpMsg],aiHistory:[...nh,{role:"assistant",content:result.text}],turnIndex:ni,players:updatedPlayers});
+    } else {
+      await patch(S.campaignId,{messages:[...nm,dm],aiHistory:[...nh,{role:"assistant",content:result.text}],turnIndex:ni,players:updatedPlayers});
+    }
   } catch(e) {
     await patch(S.campaignId,{messages:[...nm,{type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
   }
@@ -1463,6 +1603,25 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .sheet-notes:focus{border-color:var(--gold)}
 .sheet-save-btn{width:100%;background:rgba(255,255,255,.22);border:1px solid var(--p2);border-radius:2px;padding:.26rem;font-family:'Cinzel',serif;font-size:.56rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;color:var(--ink);transition:all .15s}
 .sheet-save-btn:hover{border-color:var(--gold);background:rgba(201,168,76,.12)}
+
+/* XP BAR */
+.xp-bar-wrap{margin:.5rem 0}
+.xp-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.2rem}
+.xp-lbl{font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--blood);opacity:.8}
+.xp-val{font-family:'Cinzel',serif;font-size:.56rem;color:var(--ink);opacity:.65}
+.xp-track{background:var(--p2);border-radius:2px;height:5px;overflow:hidden}
+.xp-fill{height:100%;background:linear-gradient(90deg,#6b4c8b,#9b7cc0);border-radius:2px;transition:width .5s}
+.levelup-banner{background:rgba(107,76,139,.15);border:1px solid #9b7cc0;border-radius:2px;padding:.35rem .5rem;font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.08em;color:#bba0e0;margin-top:.4rem;text-align:center;animation:pulse 2s infinite}
+/* XP message in log */
+.msg-xp{font-family:'Cinzel',serif;font-size:.68rem;text-align:center;color:#9b7cc0;letter-spacing:.1em;opacity:.85;padding:.2rem 0}
+/* Spell slot popup */
+.spell-popup{background:linear-gradient(135deg,var(--p0),var(--p1));border:1px solid var(--gold);border-radius:3px;padding:.7rem;margin-top:.5rem;box-shadow:0 4px 16px var(--sh)}
+.sp-title{font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.1em;color:var(--blood);margin-bottom:.5rem}
+.sp-btns{display:flex;gap:.35rem;flex-wrap:wrap}
+.sp-slot-btn{background:linear-gradient(135deg,var(--gold),#a8862e);border:1px solid var(--gold2);border-radius:2px;padding:.3rem .6rem;font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;color:var(--ink);font-weight:600;transition:all .15s}
+.sp-slot-btn:hover{background:linear-gradient(135deg,var(--gold2),var(--gold));box-shadow:0 2px 8px rgba(201,168,76,.4)}
+.sp-cancel{background:transparent;border:1px solid var(--p2);border-radius:2px;padding:.3rem .6rem;font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;color:var(--ink);opacity:.6;transition:opacity .15s}
+.sp-cancel:hover{opacity:1}
 </style>
 </head>
 <body><div id="root"></div></body>
