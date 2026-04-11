@@ -104,6 +104,11 @@ RULES:
 
 const PROXY = "https://dnd-proxy.onrender.com";
 
+// Keep Render free tier warm — ping every 8 minutes
+setInterval(() => fetch(`${PROXY}/health`).catch(()=>{}), 8 * 60 * 1000);
+// Also ping immediately on load
+fetch(`${PROXY}/health`).catch(()=>{});
+
 async function callDM(system, history) {
   const res  = await fetch(`${PROXY}/api/dm`, {
     method:"POST", headers:{"Content-Type":"application/json"},
@@ -419,6 +424,34 @@ function rPlay() {
   if(ai){ ai.oninput=e=>S.inputText=e.target.value; ai.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();submitAction();}}; ai.focus(); }
   const bd=id("bdecl"); if(bd) bd.onclick=submitAction;
 
+  // Retry button — resend last player message
+  qall(".btn-retry").forEach(btn => {
+    btn.onclick = async () => {
+      const camp = S.campaign;
+      // Find last player message
+      const msgs = [...camp.messages];
+      // Remove the error DM message
+      const cleaned = msgs.filter(m => !(m.type==="dm" && m.text && m.text.startsWith("(The DM")));
+      const lastPlayer = [...cleaned].reverse().find(m => m.type==="player");
+      if(!lastPlayer) return;
+      // Rebuild ai history up to before the error
+      const aiHistory = camp.aiHistory || [];
+      // Remove last assistant entry if it was the error
+      const cleanedHist = aiHistory.filter(h => !(h.role==="assistant" && h.content && h.content.startsWith("(The DM")));
+      await patch(S.campaignId, { messages: cleaned, aiHistory: cleanedHist });
+      S.submitting = true; rPlay();
+      try {
+        const txt = await callDM(buildSystem(camp), cleanedHist);
+        const dm = { type:"dm", text:txt, ts:Date.now() };
+        const ni = (camp.turnIndex) % camp.players.length;
+        await patch(S.campaignId, { messages:[...cleaned, dm], aiHistory:[...cleanedHist, {role:"assistant",content:txt}], turnIndex:(camp.turnIndex+1)%camp.players.length });
+      } catch(e) {
+        await patch(S.campaignId, { messages:[...cleaned, {type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}] });
+      }
+      S.submitting = false;
+    };
+  });
+
   qall(".dbtn").forEach(b=>b.onclick=async()=>{
     const sides=parseInt(b.dataset.d), result=rollD(sides);
     S.diceResult={sides,result};
@@ -443,7 +476,10 @@ function rPlay() {
 }
 
 function msgHtml(m) {
-  if(m.type==="dm")     return `<div class="mdm"><div class="mlbl">⚔ Dungeon Master</div>${esc(m.text)}</div>`;
+  if(m.type==="dm") {
+    const isErr = m.text && m.text.startsWith("(The DM");
+    return `<div class="mdm"><div class="mlbl">⚔ Dungeon Master</div>${esc(m.text)}${isErr ? `<button class="btn-retry" data-ts="${m.ts||''}">↺ Retry</button>` : ""}</div>`;
+  }
   if(m.type==="player") return `<div class="mpl"><div class="mlbl">↳ ${esc(m.who)}</div>${esc(m.text)}</div>`;
   if(m.type==="roll")   return `<div class="mroll">🎲 ${esc(m.text)}</div>`;
   return "";
@@ -608,6 +644,8 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 #ainp:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(201,168,76,.2)}
 .btn-declare{background:linear-gradient(135deg,var(--blood) 0%,#6b1414 100%);color:var(--p0);border:1px solid #6b1414;border-radius:2px;padding:.42rem .85rem;font-family:'Cinzel',serif;font-size:.57rem;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;transition:all .2s;white-space:nowrap}
 .btn-declare:hover{background:linear-gradient(135deg,#a02020 0%,var(--blood) 100%)}
+.btn-retry{display:inline-block;margin-top:.5rem;background:rgba(139,26,26,.12);border:1px solid var(--blood);color:var(--blood);border-radius:2px;padding:.25rem .7rem;font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.btn-retry:hover{background:rgba(139,26,26,.25)}
 
 /* SIDEBAR */
 .sbar{display:flex;flex-direction:column;gap:.72rem}
