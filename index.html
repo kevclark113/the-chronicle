@@ -204,14 +204,17 @@ const CLASS_REACTIONS = {
   Warlock:   ["Opportunity Attack"],
 };
 
-function getWeaponActions(inventory, stats, cls) {
+function getWeaponActions(inventory, equipped, stats, cls) {
   const actions = [];
   const profBonus = 2;
 
-  // Check inventory for weapons
-  (inventory||[]).forEach(item => {
+  // Only use equipped items (or all if nothing equipped yet)
+  const equippedItems = (equipped||[]).length > 0
+    ? (inventory||[]).filter((_,i) => (equipped||[]).includes(i))
+    : (inventory||[]);  // fallback: show all weapons if nothing equipped
+
+  equippedItems.forEach(item => {
     const lower = item.toLowerCase().replace(/\s*\(.*?\)/g,"").trim();
-    // Find matching weapon
     const key = Object.keys(WEAPON_DAMAGE).find(w => lower.includes(w));
     if(key) {
       const w = WEAPON_DAMAGE[key];
@@ -863,7 +866,7 @@ function combatTab(c, me, sheet) {
   const used = sheet.spellSlotsUsed || {};
   const slots= c.spellSlots || {};
   const hasSlots = Object.keys(slots).length>0;
-  const weaponActions = getWeaponActions(sheet.inventory||[], c.stats, c.cls);
+  const weaponActions = getWeaponActions(sheet.inventory||[], sheet.equipped||[], c.stats, c.cls);
   const bonusActions  = CLASS_BONUS_ACTIONS[c.cls]||[];
   const reactions     = CLASS_REACTIONS[c.cls]||[];
   // Spell actions — non-cantrip spells from sheet
@@ -970,14 +973,28 @@ function spellsTab(c, sheet) {
 
 function inventoryTab(sheet) {
   const inv = sheet.inventory || [];
+  const equipped = sheet.equipped || [];
+  // Detect if item is a weapon by checking WEAPON_DAMAGE keys
+  const isWeapon = item => Object.keys(WEAPON_DAMAGE).some(w => item.toLowerCase().replace(/\s*\(.*?\)/g,"").trim().includes(w));
   return `
     <div class="inv-gp-row">
       <span class="gp-lbl">💰 Gold:</span>
       <input class="gp-inp-sm" id="gp-sm" type="number" min="0" value="${sheet.gp||0}"/>
       <button class="btn-sm" id="gp-save">Save</button>
     </div>
+    <div class="inv-legend">
+      <span class="inv-leg-eq">⚔ = equipped (shown in actions)</span>
+    </div>
     <div class="sheet-list">
-      ${inv.map((item,i)=>`<div class="sheet-item"><span>${esc(item)}</span><button class="del-btn" data-type="inventory" data-i="${i}">✕</button></div>`).join("")}
+      ${inv.map((item,i)=>{
+        const isWeap = isWeapon(item);
+        const isEq   = equipped.includes(i);
+        return `<div class="sheet-item ${isEq?"item-equipped":""}">
+          ${isWeap?`<button class="equip-btn ${isEq?"eq-on":""}" data-i="${i}" title="${isEq?"Unequip":"Equip"}">${isEq?"⚔":"○"}</button>`:`<span class="eq-spacer"></span>`}
+          <span class="inv-name">${esc(item)}</span>
+          <button class="del-btn" data-type="inventory" data-i="${i}">✕</button>
+        </div>`;
+      }).join("")}
       ${!inv.length?`<div class="empty-list">No items yet</div>`:""}
     </div>
     <div class="sheet-add-row">
@@ -1295,6 +1312,21 @@ function bindSheetEvents(camp) {
     if(inp) inp.onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault(); inp.nextElementSibling?.click();} };
   });
 
+  // Equip/unequip toggle
+  qall(".equip-btn").forEach(btn=>{
+    btn.onclick=async()=>{
+      const i=parseInt(btn.dataset.i);
+      const camp=S.campaign, me=camp.players.find(p=>p.name===S.myName);
+      const sheet=me.sheet||{};
+      const equipped=[...(sheet.equipped||[])];
+      const idx=equipped.indexOf(i);
+      if(idx>-1) equipped.splice(idx,1);
+      else equipped.push(i);
+      const players=camp.players.map(p=>p.name===S.myName?{...p,sheet:{...sheet,equipped}}:p);
+      await patch(S.campaignId,{players});
+    };
+  });
+
   // Delete item
   qall(".del-btn").forEach(btn=>{
     btn.onclick=async()=>{
@@ -1303,7 +1335,12 @@ function bindSheetEvents(camp) {
       const sheet=me.sheet||{};
       const arr=[...(sheet[type]||[])];
       arr.splice(i,1);
-      const players=camp.players.map(p=>p.name===S.myName?{...p,sheet:{...sheet,[type]:arr}}:p);
+      // If deleting from inventory, fix equipped indices
+      let equipped=sheet.equipped||[];
+      if(type==="inventory"){
+        equipped=equipped.filter(e=>e!==i).map(e=>e>i?e-1:e);
+      }
+      const players=camp.players.map(p=>p.name===S.myName?{...p,sheet:{...sheet,[type]:arr,equipped}}:p);
       await patch(S.campaignId,{players});
     };
   });
@@ -1836,6 +1873,16 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .act-hit{color:var(--green);font-family:'Cinzel',serif;font-size:.62rem}
 .act-dmg{color:var(--blood);font-family:'Cinzel',serif;font-size:.62rem}
 .act-prop{opacity:.6;font-style:italic;font-size:.6rem}
+
+/* ── EQUIPPED ITEMS ── */
+.inv-legend{font-size:.62rem;font-style:italic;opacity:.5;margin-bottom:.35rem}
+.inv-leg-eq{color:var(--blood)}
+.item-equipped{border-color:var(--blood)!important;background:rgba(139,26,26,.08)!important}
+.equip-btn{background:transparent;border:1px solid var(--p2);border-radius:2px;width:20px;height:20px;font-size:.65rem;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s;color:var(--ink);opacity:.5;padding:0}
+.equip-btn:hover{border-color:var(--blood);opacity:1}
+.equip-btn.eq-on{background:rgba(139,26,26,.15);border-color:var(--blood);color:var(--blood);opacity:1}
+.eq-spacer{width:20px;flex-shrink:0;display:inline-block}
+.inv-name{flex:1;word-break:break-word}
 </style>
 </head>
 <body><div id="root"></div></body>
