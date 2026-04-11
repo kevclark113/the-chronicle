@@ -102,8 +102,10 @@ RULES:
 - Classic fantasy tone: dungeons, intrigue, wonder, moral weight, memorable NPCs.`;
 }
 
+const PROXY = "https://dnd-proxy.onrender.com";
+
 async function callDM(system, history) {
-  const res  = await fetch("https://api.anthropic.com/v1/messages", {
+  const res  = await fetch(`${PROXY}/api/dm`, {
     method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, system, messages:history })
   });
