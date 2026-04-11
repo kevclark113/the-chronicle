@@ -841,6 +841,131 @@ function rLobby() {
     };
   }
 }
+
+// ── PLAY ──────────────────────────────────────────────────────────────────────
+function rPlay() {
+  const camp=S.campaign;
+  if(!camp) return;
+  const cur=camp.players[camp.turnIndex%camp.players.length];
+  const isMyTurn=cur?.name===S.myName;
+  const me=camp.players.find(p=>p.name===S.myName);
+
+  q("root").innerHTML = `
+    <div class="play-wrap">
+      <header class="phead">
+        <span class="pbrand">The Chronicle</span>
+        <span class="pcode">Code: <strong>${camp.id}</strong></span>
+        <button class="btn-leave" id="btn-leave">✕ Leave</button>
+      </header>
+      <div class="pgrid">
+        <section class="narc">
+          <div class="card narc-card">
+            <div class="log" id="log">
+              ${camp.messages.map(msgHtml).join("")}
+              ${S.submitting?`<div class="thinking">The Dungeon Master weighs the fates...</div>`:""}
+            </div>
+            <div class="azone">
+              <div class="tpill ${isMyTurn?"tpill-on":"tpill-off"}">
+                ${isMyTurn?`⚔ Your turn, ${esc(S.myName)}`:`⏳ Waiting on ${esc(cur?.name)}...`}
+              </div>
+              ${isMyTurn?`<div class="arow">
+                <textarea id="ainp" placeholder="What does ${esc(me?.char?.name||S.myName)} do?" rows="2">${esc(S.inputText)}</textarea>
+                <button class="btn-declare" id="bdecl">Declare</button>
+              </div>`:""}
+            </div>
+          </div>
+        </section>
+        <aside class="sbar">
+          <div class="card sc">
+            <div class="st">Turn Order</div>
+            ${camp.players.map((p,i)=>`
+              <div class="trow ${i===camp.turnIndex%camp.players.length?"trow-cur":""}">
+                <div>
+                  <div class="tcn">${esc(p.char?p.char.name:p.name)}</div>
+                  <div class="tcs">${p.char?esc(p.char.race)+" "+esc(p.char.cls):""}</div>
+                </div>
+                ${i===camp.turnIndex%camp.players.length?`<div class="tarr">▶</div>`:""}
+              </div>`).join("")}
+          </div>
+          <div class="card sc">
+            <div class="st">Hit Points</div>
+            ${camp.players.map((p,i)=>{
+              const hp=p.hp??0,mhp=p.maxHp??1,pct=Math.max(0,Math.round(hp/mhp*100));
+              const mine=p.name===S.myName;
+              return `<div class="hpb">
+                <div class="hpn">${esc(p.char?p.char.name:p.name)}</div>
+                <div class="hbar-w"><div class="hbar" style="width:${pct}%"></div></div>
+                <div class="hpnum">${hp} / ${mhp}</div>
+                ${mine?`<div class="hpctrl">
+                  <input class="hpinp" id="hpi${i}" type="number" min="0" placeholder="amt" value="${S.dmgInputs[i]||""}"/>
+                  <button class="hbtn db" data-i="${i}">Dmg</button>
+                  <button class="hbtn hb" data-i="${i}">Heal</button>
+                </div>`:""}
+              </div>`;
+            }).join("")}
+          </div>
+          <div class="card sc">
+            <div class="st">Dice — ${esc(S.myName)}</div>
+            <div class="dgrid">${DICE.map(d=>`<button class="dbtn" data-d="${d}">d${d}</button>`).join("")}</div>
+            ${S.diceResult
+              ?`<div class="dres">${S.diceResult.result}<span>d${S.diceResult.sides}</span></div>`
+              :`<div class="dempty">tap to roll</div>`}
+          </div>
+          ${me?.char ? sheetHtml(me, camp) : ""}
+        </aside>
+      </div>
+    </div>`;
+
+  const log=id("log"); if(log) log.scrollTop=log.scrollHeight;
+  const bl=id("btn-leave"); if(bl) bl.onclick=()=>{ clearSession(); S.campaignId=null; S.myName=null; S.campaign=null; if(S.unsub){S.unsub();S.unsub=null;} go("landing"); };
+  const ai=id("ainp");
+  if(ai){ ai.oninput=e=>S.inputText=e.target.value; ai.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();submitAction();}}; ai.focus(); }
+  const bd=id("bdecl"); if(bd) bd.onclick=submitAction;
+
+  // Retry button
+  qall(".btn-retry").forEach(btn => {
+    btn.onclick = async () => {
+      const camp = S.campaign;
+      const cleaned = camp.messages.filter(m => !(m.type==="dm" && m.text && m.text.startsWith("(The DM")));
+      const cleanedHist = (camp.aiHistory||[]).filter(h => !(h.role==="assistant" && h.content && h.content.startsWith("(The DM")));
+      await patch(S.campaignId, { messages: cleaned, aiHistory: cleanedHist });
+      S.submitting = true; rPlay();
+      try {
+        const txt = await callDM(buildSystem(camp), cleanedHist);
+        const dm = { type:"dm", text:txt, ts:Date.now() };
+        await patch(S.campaignId, { messages:[...cleaned, dm], aiHistory:[...cleanedHist, {role:"assistant",content:txt}], turnIndex:(camp.turnIndex+1)%camp.players.length });
+      } catch(e) {
+        await patch(S.campaignId, { messages:[...cleaned, {type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}] });
+      }
+      S.submitting = false;
+    };
+  });
+
+  qall(".dbtn").forEach(b=>b.onclick=async()=>{
+    const sides=parseInt(b.dataset.d), result=rollD(sides);
+    S.diceResult={sides,result};
+    const msgs=[...S.campaign.messages,{type:"roll",text:`${S.myName} rolls d${sides}: ${result}`,ts:Date.now()}];
+    await patch(S.campaignId,{messages:msgs});
+  });
+
+  qall(".hbtn").forEach(b=>{
+    b.onclick=async()=>{
+      const i=parseInt(b.dataset.i), inp=id(`hpi${i}`), amt=parseInt(inp?.value)||0;
+      const p=S.campaign.players[i], mhp=p.maxHp||1;
+      const nhp=b.classList.contains("db")?Math.max(0,(p.hp||0)-amt):Math.min(mhp,(p.hp||0)+amt);
+      const players=S.campaign.players.map((pl,idx)=>idx===i?{...pl,hp:nhp}:pl);
+      S.dmgInputs[i]="";
+      await patch(S.campaignId,{players});
+    };
+  });
+  qall(".hpinp").forEach(inp=>{
+    const i=parseInt(inp.id.replace("hpi",""));
+    inp.oninput=e=>S.dmgInputs[i]=e.target.value;
+  });
+
+  bindSheetEvents(camp);
+}
+
 // ── SHEET EVENT HANDLERS ──────────────────────────────────────────────────────
 function bindSheetEvents(camp) {
   const me = camp.players.find(p=>p.name===S.myName);
