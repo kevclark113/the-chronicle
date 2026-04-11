@@ -269,6 +269,12 @@ let S = {
   sheetOpen:  false,
   sheetTab:   "inventory",
   pendingSpell: null,
+  inCombat: false,
+  initiativeOrder: [],
+  combatTurnIdx: 0,
+  pendingDeathSave: false,
+  pendingAdvantage: null,   // {type:"advantage"|"disadvantage", reason:""} or null
+  pendingConCheck: null,    // {dc:X, damage:Y} or null
 };
 
 
@@ -322,6 +328,14 @@ RULES:
 - Keep all players engaged through vivid narration even when it's not their turn.
 - Classic fantasy tone: dungeons, intrigue, wonder, moral weight, memorable NPCs.
 
+COMBAT & INITIATIVE:
+${camp.combat ? `Currently IN COMBAT. Initiative order: ${(camp.initiativeOrder||[]).map((e,i)=>`${i+1}. ${e.name}(${e.initiative})`).join(", ")}. Current turn: ${(camp.initiativeOrder||[])[camp.combatTurnIdx%Math.max(1,(camp.initiativeOrder||[]).length)]?.name||"unknown"}.
+- On enemy turns: narrate what the enemy does, apply any damage via HP_CHANGES, then state who is next.
+- When ALL enemies are defeated or combat clearly ends, append: COMBAT_END
+- Always append ENEMY_HP:[{"name":"EnemyName","hp":X,"maxHp":Y}] with current enemy HP after each combat action.` : `NOT in combat.
+- When combat begins (enemies attack or initiative would be rolled): append INITIATIVE_START:["EnemyName1","EnemyName2"] listing ALL enemies entering combat. The app will auto-roll player initiatives.
+- Also append ENEMY_INITIATIVES:[{"name":"EnemyName","initiative":X,"hp":Y,"maxHp":Y}] with enemy initiative rolls (d20 + their DEX mod, typically +0 to +3 for most monsters).`}
+
 XP AWARDS:
 After your narrative, append these two JSON blocks on their own lines (no markdown, no code fences):
 XP_AWARD:{"xp":0,"reason":""}
@@ -332,15 +346,45 @@ XP rules: Award XP only when something meaningful happens — defeating enemies 
 HP_CHANGES rules: Include an entry for every player whose HP changes this turn. Format each entry as:
 {"name":"PlayerName","delta":-8,"reason":"hit by goblin sword"}
 Use negative delta for damage, positive for healing. For a long rest use delta equal to their full max HP (they fully restore). For a short rest, use a reasonable Hit Die roll. If no HP changes, leave the array empty: [].
-Always use the player's real name (not character name) exactly as listed in the party.`;
+Always use the player's real name (not character name) exactly as listed in the party.
+
+CONDITIONS: Append this block when any character gains or loses a condition:
+CONDITIONS:[{"name":"CharacterName","condition":"Poisoned","active":true}]
+Use active:true when applied, active:false when it ends. Conditions: Unconscious, Asleep, Paralyzed, Stunned, Petrified, Frightened, Poisoned, Prone, Blinded, Deafened, Restrained, Exhausted. Use player real name for players, enemy name for enemies. Omit if no changes.
+
+DEATH SAVING THROWS: When an unconscious player at 0 HP takes their turn, do NOT ask them to act. The app handles death saves automatically. When a player takes damage while unconscious, append:
+CONDITIONS:[{"name":"PlayerName","condition":"DeathFail","active":true}]
+Add one entry per hit. The app tracks successes/failures.
+
+ADVANTAGE/DISADVANTAGE: When the next player's roll clearly has advantage or disadvantage due to conditions or circumstances, append:
+ROLL_MOD:{"type":"advantage","reason":"target is Prone","target":"PlayerName"}
+or ROLL_MOD:{"type":"disadvantage","reason":"you are Blinded","target":"PlayerName"}
+Omit if neither applies.
+
+CONCENTRATION: When a concentrating player takes damage, append:
+CON_CHECK:{"name":"PlayerName","damage":8}
+The app will prompt them to roll a CON save. If they fail, remove their concentration spell automatically.`;
 }
 
 const PROXY = "https://dnd-proxy.onrender.com";
 
 // Keep Render free tier warm — ping every 8 minutes
 setInterval(() => fetch(`${PROXY}/health`).catch(()=>{}), 8 * 60 * 1000);
-// Also ping immediately on load
-fetch(`${PROXY}/health`).catch(()=>{});
+
+// Warmup on load — shows status indicator until server responds
+let serverReady = false;
+async function warmupServer() {
+  const banner = document.getElementById("server-banner");
+  const start = Date.now();
+  try {
+    await fetch(`${PROXY}/health`);
+    serverReady = true;
+    if(banner) { banner.classList.add("server-ok"); banner.textContent = "✦ DM Connected"; setTimeout(()=>banner.style.display="none", 2000); }
+  } catch(e) {
+    serverReady = false;
+    if(banner) { banner.classList.add("server-err"); banner.textContent = "⚠ DM Unreachable — check connection"; }
+  }
+}
 
 async function callDM(system, history) {
   const res  = await fetch(`${PROXY}/api/dm`, {
@@ -361,12 +405,53 @@ async function callDM(system, history) {
   if(hpMatch) {
     try { hpChanges = JSON.parse(hpMatch[1])||[]; } catch(e){}
   }
-  // Strip JSON blocks from displayed text
+  // Parse initiative signals
+  const initStartMatch = raw.match(/INITIATIVE_START:(\[.*?\])/);
+  let initiativeStart = null;
+  if(initStartMatch) { try { initiativeStart = JSON.parse(initStartMatch[1]); } catch(e){} }
+
+  const enemyInitMatch = raw.match(/ENEMY_INITIATIVES:(\[.*?\])/s);
+  let enemyInitiatives = [];
+  if(enemyInitMatch) { try { enemyInitiatives = JSON.parse(enemyInitMatch[1])||[]; } catch(e){} }
+
+  const combatEnd = /COMBAT_END/.test(raw);
+
+  const enemyHpMatch = raw.match(/ENEMY_HP:(\[.*?\])/s);
+  let enemyHp = [];
+  if(enemyHpMatch) { try { enemyHp = JSON.parse(enemyHpMatch[1])||[]; } catch(e){} }
+
+  // Strip all JSON/signal blocks from displayed text
   const text = raw
     .replace(/\nXP_AWARD:\{.*?\}/g,"")
     .replace(/\nHP_CHANGES:\[.*?\]/gs,"")
+    .replace(/\nINITIATIVE_START:\[.*?\]/g,"")
+    .replace(/\nENEMY_INITIATIVES:\[.*?\]/gs,"")
+    .replace(/\nENEMY_HP:\[.*?\]/gs,"")
+    .replace(/\nCOMBAT_END/g,"")
     .trim();
-  return { text, xpAward, xpReason, hpChanges };
+  // Parse conditions
+  const condMatch = raw.match(/CONDITIONS:(\[.*?\])/s);
+  let conditions = [];
+  if(condMatch) { try { conditions = JSON.parse(condMatch[1])||[]; } catch(e){} }
+
+  // Parse roll modifier (advantage/disadvantage)
+  const rollModMatch = raw.match(/ROLL_MOD:(\{.*?\})/);
+  let rollMod = null;
+  if(rollModMatch) { try { rollMod = JSON.parse(rollModMatch[1]); } catch(e){} }
+
+  // Parse concentration check
+  const concCheckMatch = raw.match(/CON_CHECK:(\{.*?\})/);
+  let concCheck = null;
+  if(concCheckMatch) { try { concCheck = JSON.parse(concCheckMatch[1]); } catch(e){} }
+
+  // Strip all blocks from text
+  const text2 = text
+    .replace(/\nCONDITIONS:\[.*?\]/gs,"")
+    .replace(/\nROLL_MOD:\{.*?\}/g,"")
+    .replace(/\nCON_CHECK:\{.*?\}/g,"")
+    .trim();
+
+  return { text:text2, xpAward, xpReason, hpChanges, initiativeStart, enemyInitiatives, combatEnd, enemyHp, conditions, rollMod, concCheck };
 }
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
@@ -952,6 +1037,13 @@ function combatTab(c, me, sheet) {
       <span class="conc-lbl">Concentration:</span>
       <input class="conc-inp" id="conc-inp" placeholder="None" value="${esc(sheet.concentration||"")}"/>
     </div>
+    ${(me.conditions||[]).length?`
+    <div class="action-section">
+      <div class="slots-lbl">⚠ Active Conditions</div>
+      <div class="cond-badges-lg">
+        ${(me.conditions||[]).map(c=>`<span class="cond-badge-lg ${TURN_SKIP_CONDITIONS.includes(c)?"cond-danger":""}">${CONDITION_ICONS[c]||""}${c}</span>`).join("")}
+      </div>
+    </div>`:""}
     <div class="feature-section">
       <div class="slots-lbl">★ Class Features</div>
       ${(c.features||[]).map(f=>`<div class="feature-item">✦ ${esc(f)}</div>`).join("")}
@@ -1058,6 +1150,7 @@ function rLobby() {
     id("bstart").onclick=async()=>{
       const btn=id("bstart"); btn.disabled=true; btn.textContent="Summoning the tale...";
       const camp=S.campaign, sys=buildSystem(camp), fp=camp.players[0].name;
+      if(!serverReady){ id("er").textContent="DM server is still warming up — wait a moment and try again."; btn.disabled=false; btn.textContent="⚔ Begin the Adventure"; return; }
       try {
         const txt=await callDM(sys,[{role:"user",content:`Begin the campaign. Open with a vivid atmospheric scene that brings all ${camp.players.length} adventurers together. Establish immediate tension or a compelling hook. End by inviting ${fp} to act first.`}]);
         const msg={type:"dm",text:txt,ts:Date.now()};
@@ -1072,8 +1165,14 @@ function rLobby() {
 function rPlay() {
   const camp=S.campaign;
   if(!camp) return;
-  const cur=camp.players[camp.turnIndex%camp.players.length];
-  const isMyTurn=cur?.name===S.myName;
+  const combatOrder = camp.initiativeOrder||[];
+  const inCombat = camp.combat && combatOrder.length > 0;
+  const combatSlot = inCombat ? combatOrder[(camp.combatTurnIdx||0)%combatOrder.length] : null;
+  const isEnemyTurn = inCombat && combatSlot?.isEnemy;
+  const cur = inCombat
+    ? camp.players.find(p=>p.name===combatSlot?.name) || camp.players[camp.turnIndex%camp.players.length]
+    : camp.players[camp.turnIndex%camp.players.length];
+  const isMyTurn = isEnemyTurn ? false : (inCombat ? combatSlot?.name===S.myName : cur?.name===S.myName);
   const me=camp.players.find(p=>p.name===S.myName);
 
   q("root").innerHTML = `
@@ -1091,48 +1190,106 @@ function rPlay() {
               ${S.submitting?`<div class="thinking">The Dungeon Master weighs the fates...</div>`:""}
             </div>
             <div class="azone">
-              <div class="tpill ${isMyTurn?"tpill-on":"tpill-off"}">
-                ${isMyTurn?`⚔ Your turn, ${esc(S.myName)}`:`⏳ Waiting on ${esc(cur?.name)}...`}
+              <div class="tpill ${isMyTurn?"tpill-on":isEnemyTurn?"tpill-enemy":"tpill-off"}">
+                ${isMyTurn?`⚔ Your turn, ${esc(S.myName)}`:isEnemyTurn?`👹 ${esc(combatSlot?.name)} acts...`:`⏳ Waiting on ${esc(inCombat?combatSlot?.name:cur?.name)}...`}
               </div>
-              ${isMyTurn?`<div class="arow">
-                <textarea id="ainp" placeholder="What does ${esc(me?.char?.name||S.myName)} do?" rows="2">${esc(S.inputText)}</textarea>
-                <div class="declare-btns">
-                  <button class="btn-declare" id="bdecl">Declare</button>
-                  <button class="btn-bonus ${(camp.players.find(p=>p.name===S.myName)?.sheet?.bonusAction)?"btn-bonus-used":""}" id="bdecl-bonus" title="Declare action and use Bonus Action">+ Bonus</button>
+              ${(()=>{
+                const meP = camp.players.find(p=>p.name===S.myName);
+                const isUnconscious = (meP?.conditions||[]).includes("Unconscious");
+                const isDead = (meP?.conditions||[]).includes("Dead");
+                const isStable = (meP?.conditions||[]).includes("Stable");
+                const ds = meP ? getDeathSaveState(meP) : {successes:0,failures:0};
+
+                if(isDead) return `<div class="death-banner">💀 ${esc(meP?.char?.name||S.myName)} has died. Your story ends here.</div>`;
+                if(isStable) return `<div class="stable-banner">💚 ${esc(meP?.char?.name||S.myName)} is stable — awaiting healing.</div>`;
+
+                if(isMyTurn && isUnconscious) return `
+                  <div class="death-save-box">
+                    <div class="ds-title">💀 Death Saving Throw</div>
+                    <div class="ds-track">
+                      <span class="ds-label">Successes:</span>
+                      ${[0,1,2].map(i=>`<div class="ds-pip ${i<ds.successes?"ds-success":""}"></div>`).join("")}
+                      <span class="ds-label" style="margin-left:.4rem">Failures:</span>
+                      ${[0,1,2].map(i=>`<div class="ds-pip ${i<ds.failures?"ds-fail":""}"></div>`).join("")}
+                    </div>
+                    <button class="btn-declare ds-roll-btn" id="btn-death-save">Roll Death Save (d20)</button>
+                  </div>`;
+
+                if(S.pendingConCheck && S.pendingConCheck.name===S.myName) return `
+                  <div class="spell-popup">
+                    <div class="sp-title">🎯 Concentration Check — DC ${S.pendingConCheck.dc} (took ${S.pendingConCheck.damage} dmg)</div>
+                    <div class="sp-btns">
+                      <button class="btn-declare" id="btn-con-roll">Roll CON Save (d20)</button>
+                      <button class="sp-cancel" id="btn-con-cancel">Dismiss</button>
+                    </div>
+                  </div>`;
+
+                if(!isMyTurn) return "";
+
+                const advBanner = (S.pendingAdvantage && S.pendingAdvantage.target===S.myName) ? `
+                  <div class="adv-banner ${S.pendingAdvantage.type==="advantage"?"adv-on":"dis-on"}">
+                    ${S.pendingAdvantage.type==="advantage"?"⬆ Advantage":"⬇ Disadvantage"}: ${esc(S.pendingAdvantage.reason)}
+                  </div>` : "";
+
+                return `${advBanner}<div class="arow">
+                  <textarea id="ainp" placeholder="What does ${esc(meP?.char?.name||S.myName)} do?" rows="2">${esc(S.inputText)}</textarea>
+                  <div class="declare-btns">
+                    <button class="btn-declare" id="bdecl">Declare</button>
+                    <button class="btn-bonus ${meP?.sheet?.bonusAction?"btn-bonus-used":""}" id="bdecl-bonus">+ Bonus</button>
+                  </div>
                 </div>
-              </div>
-              ${S.pendingSpell?`<div class="spell-popup">
-                <div class="sp-title">🔮 Casting ${esc(S.pendingSpell.spell)} — choose slot level:</div>
-                <div class="sp-btns">
-                  ${S.pendingSpell.availLevels.map(l=>`<button class="sp-slot-btn" data-lvl="${l}">Level ${l}</button>`).join("")}
-                  <button class="sp-cancel">Cancel</button>
-                </div>
-              </div>`:""}
-              `:""}
+                ${S.pendingSpell?`<div class="spell-popup">
+                  <div class="sp-title">🔮 Casting ${esc(S.pendingSpell.spell)} — choose slot level:</div>
+                  <div class="sp-btns">
+                    ${S.pendingSpell.availLevels.map(l=>`<button class="sp-slot-btn" data-lvl="${l}">Level ${l}</button>`).join("")}
+                    <button class="sp-cancel">Cancel</button>
+                  </div>
+                </div>`:""}`;
+              })()}
             </div>
           </div>
         </section>
         <aside class="sbar">
           <div class="card sc">
-            <div class="st">Turn Order</div>
-            ${camp.players.map((p,i)=>`
-              <div class="trow ${i===camp.turnIndex%camp.players.length?"trow-cur":""}">
-                <div>
-                  <div class="tcn">${esc(p.char?p.char.name:p.name)}</div>
-                  <div class="tcs">${p.char?esc(p.char.race)+" "+esc(p.char.cls):""}</div>
-                </div>
-                ${i===camp.turnIndex%camp.players.length?`<div class="tarr">▶</div>`:""}
-              </div>`).join("")}
+            <div class="st">${camp.combat?"⚔ Initiative Order":"Turn Order"}</div>
+            ${camp.combat && (camp.initiativeOrder||[]).length > 0 ? `
+              ${camp.initiativeOrder.map((e,i)=>{
+                const isCur = i===((camp.combatTurnIdx||0)%camp.initiativeOrder.length);
+                const hpPct = e.isEnemy ? Math.max(0,Math.round((e.hp/e.maxHp)*100)) : null;
+                const eConds = e.conditions||[];
+                const isSkipped = shouldSkipTurn(e);
+                const condBadges = eConds.map(c=>`<span class="cond-badge">${CONDITION_ICONS[c]||""}${c}</span>`).join("");
+                return `<div class="trow ${isCur?"trow-cur":""} ${isSkipped?"trow-skipped":""}">
+                  <div style="flex:1">
+                    <div class="tcn ${e.isEnemy?"tcn-enemy":""}">${esc(e.charName||e.name)} <span class="init-num">${e.initiative}</span>${isSkipped?` <span class="skip-badge">SKIP</span>`:""}</div>
+                    ${e.isEnemy&&hpPct!==null?`<div class="enemy-hpbar-w"><div class="enemy-hpbar" style="width:${hpPct}%"></div></div>`:""}
+                    ${!e.isEnemy?`<div class="tcs">${esc(e.name)}</div>`:`<div class="tcs">Enemy</div>`}
+                    ${condBadges?`<div class="cond-badges">${condBadges}</div>`:""}
+                  </div>
+                  ${isCur?`<div class="tarr">▶</div>`:""}
+                </div>`;
+              }).join("")}` : `
+              ${camp.players.map((p,i)=>`
+                <div class="trow ${i===camp.turnIndex%camp.players.length?"trow-cur":""}">
+                  <div>
+                    <div class="tcn">${esc(p.char?p.char.name:p.name)}</div>
+                    <div class="tcs">${p.char?esc(p.char.race)+" "+esc(p.char.cls):""}</div>
+                  </div>
+                  ${i===camp.turnIndex%camp.players.length?`<div class="tarr">▶</div>`:""}
+                </div>`).join("")}`}
           </div>
           <div class="card sc">
             <div class="st">Hit Points</div>
             ${camp.players.map((p,i)=>{
               const hp=p.hp??0,mhp=p.maxHp??1,pct=Math.max(0,Math.round(hp/mhp*100));
               const mine=p.name===S.myName;
+              const pConds = p.conditions||[];
+              const pCondBadges = pConds.map(c=>`<span class="cond-badge">${CONDITION_ICONS[c]||""}${c}</span>`).join("");
               return `<div class="hpb">
-                <div class="hpn">${esc(p.char?p.char.name:p.name)}</div>
+                <div class="hpn">${esc(p.char?p.char.name:p.name)}${(p.hp||0)<=0?` <span class="skip-badge">KO</span>`:""}</div>
                 <div class="hbar-w"><div class="hbar" style="width:${pct}%"></div></div>
                 <div class="hpnum">${hp} / ${mhp}</div>
+                ${pCondBadges?`<div class="cond-badges">${pCondBadges}</div>`:""}
                 ${mine?`<div class="hpctrl">
                   <input class="hpinp" id="hpi${i}" type="number" min="0" placeholder="amt" value="${S.dmgInputs[i]||""}"/>
                   <button class="hbtn db" data-i="${i}">Dmg</button>
@@ -1156,6 +1313,31 @@ function rPlay() {
   const log=id("log"); if(log) log.scrollTop=log.scrollHeight;
   const bl=id("btn-leave"); if(bl) bl.onclick=()=>{ clearSession(); S.campaignId=null; S.myName=null; S.campaign=null; if(S.unsub){S.unsub();S.unsub=null;} go("landing"); };
 
+  // Death save button
+  const dsBtn=id("btn-death-save");
+  if(dsBtn) dsBtn.onclick=async()=>{
+    const roll=rollD(20);
+    const camp=S.campaign;
+    await patch(S.campaignId,{messages:[...camp.messages,{type:"roll",text:`${S.myName} rolls death save: ${roll}`,ts:Date.now()}]});
+    await resolveDeathSave(roll);
+  };
+
+  // Concentration check buttons
+  const conRollBtn=id("btn-con-roll");
+  if(conRollBtn) conRollBtn.onclick=async()=>{
+    const camp=S.campaign;
+    const me=camp.players.find(p=>p.name===S.myName);
+    const conMod=mod(me?.char?.stats?.CON||10);
+    const roll=rollD(20)+conMod;
+    await patch(S.campaignId,{messages:[...camp.messages,{type:"roll",text:`${S.myName} rolls CON save: ${roll} (d20${conMod>=0?"+"+conMod:conMod})`,ts:Date.now()}]});
+    await resolveConCheck(roll, S.pendingConCheck?.dc||10);
+  };
+  const conCancelBtn=id("btn-con-cancel");
+  if(conCancelBtn) conCancelBtn.onclick=()=>{ S.pendingConCheck=null; rPlay(); };
+
+  // Clear advantage after declaring
+  const clearAdv=()=>{ S.pendingAdvantage=null; };
+
   // Spell slot popup handlers
   qall(".sp-slot-btn").forEach(btn=>{
     btn.onclick=()=>{ submitAction(btn.dataset.lvl, S.pendingSpell?.useBonusAction||false); };
@@ -1174,8 +1356,8 @@ function rPlay() {
   }
   const ai=id("ainp");
   if(ai){ ai.oninput=e=>S.inputText=e.target.value; ai.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();submitAction();}}; ai.focus(); }
-  const bd=id("bdecl"); if(bd) bd.onclick=()=>submitAction(undefined, false);
-  const bdb=id("bdecl-bonus"); if(bdb) bdb.onclick=()=>submitAction(undefined, true);
+  const bd=id("bdecl"); if(bd) bd.onclick=()=>{ clearAdv(); submitAction(undefined, false); };
+  const bdb=id("bdecl-bonus"); if(bdb) bdb.onclick=()=>{ clearAdv(); submitAction(undefined, true); };
 
   // Retry button
   qall(".btn-retry").forEach(btn => {
@@ -1378,8 +1560,212 @@ function msgHtml(m) {
   if(m.type==="roll")   return `<div class="mroll">🎲 ${esc(m.text)}</div>`;
   if(m.type==="xp")     return `<div class="msg-xp">✦ ${esc(m.text)}</div>`;
   if(m.type==="hp")     return `<div class="msg-hp ${m.text&&m.text.includes('UNCONSCIOUS')?"msg-hp-dead":""}">❤ ${esc(m.text)}</div>`;
+  if(m.type==="initiative") return `<div class="msg-init">⚔ ${esc(m.text)}</div>`;
+  if(m.type==="condition")  return `<div class="msg-cond">${esc(m.text)}</div>`;
   return "";
 }
+
+// ── CONDITIONS ────────────────────────────────────────────────────────────────
+const TURN_SKIP_CONDITIONS = ["Unconscious","Asleep","Paralyzed","Stunned","Petrified"];
+const CONDITION_ICONS = {
+  Unconscious:"💀", Asleep:"😴", Paralyzed:"🔒", Stunned:"⭐", Petrified:"🗿",
+  Frightened:"😨", Poisoned:"☠", Prone:"⬇", Blinded:"👁", Deafened:"👂",
+  Restrained:"⛓", Exhausted:"😓"
+};
+
+function applyConditions(players, initiativeOrder, conditions) {
+  let updatedPlayers = [...players];
+  let updatedOrder = [...(initiativeOrder||[])];
+  const condMsgs = [];
+
+  (conditions||[]).forEach(c => {
+    const name = c.name;
+    const cond = c.condition;
+    const active = c.active !== false;
+
+    // Apply to player
+    updatedPlayers = updatedPlayers.map(p => {
+      if(p.name.toLowerCase() !== name.toLowerCase()) return p;
+      const current = [...(p.conditions||[])];
+      const idx = current.indexOf(cond);
+      if(active && idx===-1) current.push(cond);
+      if(!active && idx>-1) current.splice(idx,1);
+      condMsgs.push({
+        type:"condition",
+        text:`${p.char?.name||p.name} is ${active?"now "+cond:"no longer "+cond} ${CONDITION_ICONS[cond]||""}`,
+        ts: Date.now()+condMsgs.length
+      });
+      return {...p, conditions:current};
+    });
+
+    // Apply to enemy in initiative order
+    updatedOrder = updatedOrder.map(e => {
+      if(!e.isEnemy || e.name.toLowerCase()!==name.toLowerCase()) return e;
+      const current = [...(e.conditions||[])];
+      const idx = current.indexOf(cond);
+      if(active && idx===-1) current.push(cond);
+      if(!active && idx>-1) current.splice(idx,1);
+      if(!condMsgs.find(m=>m.text.includes(e.name))) {
+        condMsgs.push({
+          type:"condition",
+          text:`${e.name} is ${active?"now "+cond:"no longer "+cond} ${CONDITION_ICONS[cond]||""}`,
+          ts: Date.now()+condMsgs.length
+        });
+      }
+      return {...e, conditions:current};
+    });
+  });
+
+  return { updatedPlayers, updatedOrder, condMsgs };
+}
+
+function shouldSkipTurn(entity) {
+  const conds = entity.conditions||[];
+  if(entity.hp !== undefined && entity.hp <= 0) return true;
+  return conds.some(c => TURN_SKIP_CONDITIONS.includes(c));
+}
+
+function nextActiveCombatSlot(order, currentIdx) {
+  if(!order || order.length===0) return 0;
+  let next = (currentIdx+1) % order.length;
+  let attempts = 0;
+  while(shouldSkipTurn(order[next]) && attempts < order.length) {
+    next = (next+1) % order.length;
+    attempts++;
+  }
+  return next;
+}
+
+
+// ── DEATH SAVES / ADVANTAGE / CONCENTRATION ──────────────────────────────────
+function getDeathSaveState(player) {
+  const conds = player.conditions||[];
+  const successes = conds.filter(c=>c==="DeathSuccess").length;
+  const failures  = conds.filter(c=>c==="DeathFail").length;
+  return { successes, failures, stable: successes>=3, dead: failures>=3 };
+}
+
+async function resolveDeathSave(roll) {
+  const camp = S.campaign;
+  const me = camp.players.find(p=>p.name===S.myName);
+  if(!me) return;
+  const ds = getDeathSaveState(me);
+  let conds = [...(me.conditions||[])];
+  const msgs = [];
+
+  if(roll===20) {
+    // Nat 20 — regain 1 HP, remove Unconscious
+    conds = conds.filter(c=>c!=="Unconscious"&&c!=="DeathSuccess"&&c!=="DeathFail");
+    const players = camp.players.map(p=>p.name===S.myName?{...p,hp:1,conditions:conds}:p);
+    msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls a 20 on their death save — they regain consciousness with 1 HP! 🌟`,ts:Date.now()});
+    await patch(S.campaignId,{players,messages:[...camp.messages,...msgs]});
+  } else if(roll===1) {
+    // Nat 1 — 2 failures
+    conds.push("DeathFail","DeathFail");
+    const newDs = getDeathSaveState({conditions:conds});
+    if(newDs.dead) {
+      msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls a 1 — two failures! They have died. ☠️`,ts:Date.now()});
+      conds.push("Dead");
+    } else {
+      msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls a 1 — two death save failures (${newDs.failures}/3).`,ts:Date.now()});
+    }
+    const players = camp.players.map(p=>p.name===S.myName?{...p,conditions:conds}:p);
+    await patch(S.campaignId,{players,messages:[...camp.messages,...msgs]});
+  } else if(roll>=10) {
+    // Success
+    conds.push("DeathSuccess");
+    const newDs = getDeathSaveState({conditions:conds});
+    if(newDs.stable) {
+      conds = conds.filter(c=>c!=="DeathSuccess"&&c!=="DeathFail");
+      conds.push("Stable");
+      msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls ${roll} — 3 successes! They are stable. 💚`,ts:Date.now()});
+    } else {
+      msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls ${roll} — death save success (${newDs.successes}/3).`,ts:Date.now()});
+    }
+    const players = camp.players.map(p=>p.name===S.myName?{...p,conditions:conds}:p);
+    await patch(S.campaignId,{players,messages:[...camp.messages,...msgs]});
+  } else {
+    // Failure
+    conds.push("DeathFail");
+    const newDs = getDeathSaveState({conditions:conds});
+    if(newDs.dead) {
+      msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls ${roll} — 3 failures. They have died. ☠️`,ts:Date.now()});
+      conds.push("Dead");
+    } else {
+      msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls ${roll} — death save failure (${newDs.failures}/3).`,ts:Date.now()});
+    }
+    const players = camp.players.map(p=>p.name===S.myName?{...p,conditions:conds}:p);
+    await patch(S.campaignId,{players,messages:[...camp.messages,...msgs]});
+  }
+
+  S.pendingDeathSave=false;
+  // Advance combat turn
+  const updatedCamp = await (async()=>{ const s=await (await fetch).call(null); })().catch(()=>S.campaign);
+  const order = camp.initiativeOrder||[];
+  if(order.length>0) await patch(S.campaignId,{combatTurnIdx:nextActiveCombatSlot(order,camp.combatTurnIdx||0)});
+}
+
+async function resolveConCheck(roll, dc) {
+  const camp = S.campaign;
+  const me = camp.players.find(p=>p.name===S.myName);
+  if(!me) return;
+  const msgs = [];
+  if(roll >= dc) {
+    msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls ${roll} for CON save (DC ${dc}) — concentration maintained! ✓`,ts:Date.now()});
+  } else {
+    const sheet = me.sheet||{};
+    const players = camp.players.map(p=>p.name===S.myName?{...p,sheet:{...sheet,concentration:""}}:p);
+    msgs.push({type:"condition",text:`${me.char?.name||me.name} rolls ${roll} for CON save (DC ${dc}) — concentration broken! The spell ends.`,ts:Date.now()});
+    await patch(S.campaignId,{players,messages:[...camp.messages,...msgs]});
+    S.pendingConCheck=null;
+    return;
+  }
+  await patch(S.campaignId,{messages:[...camp.messages,...msgs]});
+  S.pendingConCheck=null;
+}
+
+
+// ── INITIATIVE HELPERS ────────────────────────────────────────────────────────
+function rollInitiative(dexMod) {
+  return rollD(20) + dexMod;
+}
+
+function buildInitiativeOrder(players, enemyInitiatives) {
+  const entries = [];
+  // Player entries
+  players.forEach(p => {
+    if(!p.char) return;
+    const dexMod = mod(p.char.stats.DEX);
+    const roll = rollInitiative(dexMod);
+    entries.push({
+      name: p.name,
+      charName: p.char.name,
+      initiative: roll,
+      isEnemy: false,
+      hp: p.hp,
+      maxHp: p.maxHp,
+    });
+  });
+  // Enemy entries
+  (enemyInitiatives||[]).forEach(e => {
+    entries.push({
+      name: e.name,
+      charName: e.name,
+      initiative: e.initiative,
+      isEnemy: true,
+      hp: e.hp || 10,
+      maxHp: e.maxHp || e.hp || 10,
+    });
+  });
+  // Sort highest to lowest, ties broken randomly
+  entries.sort((a,b) => b.initiative - a.initiative || Math.random()-0.5);
+  return entries;
+}
+
+function advanceCombatTurn(order, currentIdx) {
+  return (currentIdx + 1) % order.length;
+}
+
 
 function detectSpellUse(action, knownSpells) {
   if(!knownSpells || !knownSpells.length) return null;
@@ -1486,11 +1872,106 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
     if(hpMessages.length>0) extraMsgs.push(...hpMessages);
     if(result.xpAward>0) extraMsgs.push({type:"xp",text:`+${result.xpAward} XP — ${result.xpReason}`,ts:Date.now()+100});
 
+    // Handle initiative start
+    let combatUpdate = {};
+    const initMsgs = [];
+
+    if(result.initiativeStart && result.enemyInitiatives) {
+      const order = buildInitiativeOrder(updatedPlayers, result.enemyInitiatives);
+      combatUpdate = { combat: true, initiativeOrder: order, combatTurnIdx: 0 };
+      // Log initiative rolls
+      order.forEach(e => {
+        initMsgs.push({
+          type:"initiative",
+          text:`${e.charName||e.name} rolls initiative: ${e.initiative}${e.isEnemy?" (enemy)":""}`,
+          ts: Date.now() + initMsgs.length
+        });
+      });
+      initMsgs.push({
+        type:"initiative",
+        text:`⚔ COMBAT BEGINS — Turn order: ${order.map(e=>e.charName||e.name).join(" → ")}`,
+        ts: Date.now() + initMsgs.length + 1
+      });
+    } else if(camp.combat && result.enemyHp) {
+      // Update enemy HP in initiative order
+      const updatedOrder = (camp.initiativeOrder||[]).map(e => {
+        if(!e.isEnemy) return e;
+        const update = result.enemyHp.find(h=>h.name.toLowerCase()===e.name.toLowerCase());
+        if(update) return {...e, hp:update.hp, maxHp:update.maxHp||e.maxHp};
+        return e;
+      });
+      // Remove dead enemies (hp <= 0)
+      const livingOrder = updatedOrder.filter(e => !e.isEnemy || e.hp > 0);
+      const nextTurnIdx = camp.combatTurnIdx % Math.max(1, livingOrder.length);
+      combatUpdate = { initiativeOrder: livingOrder, combatTurnIdx: nextActiveCombatSlot(livingOrder, nextTurnIdx) };
+    } else if(camp.combat && !result.combatEnd) {
+      // Advance combat turn, skipping incapacitated slots
+      const order = camp.initiativeOrder||[];
+      combatUpdate = { combatTurnIdx: nextActiveCombatSlot(order, camp.combatTurnIdx||0) };
+    }
+
+    if(result.combatEnd) {
+      combatUpdate = { combat: false, initiativeOrder: [], combatTurnIdx: 0 };
+      initMsgs.push({ type:"initiative", text:"⚔ COMBAT ENDS — returning to exploration.", ts:Date.now() });
+    }
+
+    // Set advantage/disadvantage for next roll
+    if(result.rollMod && result.rollMod.target) {
+      const targetPlayer = updatedPlayers.find(p=>p.name===result.rollMod.target);
+      if(targetPlayer) S.pendingAdvantage = result.rollMod;
+    }
+
+    // Set concentration check if needed
+    if(result.concCheck) {
+      const targetPlayer = updatedPlayers.find(p=>p.name===result.concCheck.name);
+      if(targetPlayer && (targetPlayer.sheet?.concentration||"").length>0) {
+        const dc = Math.max(10, Math.floor(result.concCheck.damage/2));
+        S.pendingConCheck = { dc, damage:result.concCheck.damage, name:result.concCheck.name };
+      }
+    }
+
+    // Apply conditions
+    let condMsgs = [];
+    if(result.conditions && result.conditions.length > 0) {
+      const condResult = applyConditions(
+        updatedPlayers,
+        combatUpdate.initiativeOrder || camp.initiativeOrder || [],
+        result.conditions
+      );
+      updatedPlayers = condResult.updatedPlayers;
+      if(combatUpdate.initiativeOrder) combatUpdate.initiativeOrder = condResult.updatedOrder;
+      else if(camp.combat) combatUpdate.initiativeOrder = condResult.updatedOrder;
+      condMsgs = condResult.condMsgs;
+
+      // Re-check if current combat slot should now be skipped after conditions applied
+      if(camp.combat && combatUpdate.initiativeOrder) {
+        const curIdx = combatUpdate.combatTurnIdx ?? camp.combatTurnIdx ?? 0;
+        const curSlot = combatUpdate.initiativeOrder[curIdx % combatUpdate.initiativeOrder.length];
+        if(curSlot && shouldSkipTurn(curSlot)) {
+          combatUpdate.combatTurnIdx = nextActiveCombatSlot(combatUpdate.initiativeOrder, curIdx);
+        }
+      }
+    }
+
+    // Also auto-knock-unconscious players at 0 HP
+    updatedPlayers = updatedPlayers.map(p => {
+      if((p.hp||0) <= 0 && !(p.conditions||[]).includes("Unconscious")) {
+        condMsgs.push({ type:"condition", text:`${p.char?.name||p.name} falls unconscious! 💀`, ts:Date.now()+condMsgs.length });
+        return {...p, conditions:[...(p.conditions||[]), "Unconscious"]};
+      }
+      if((p.hp||0) > 0 && (p.conditions||[]).includes("Unconscious")) {
+        condMsgs.push({ type:"condition", text:`${p.char?.name||p.name} regains consciousness!`, ts:Date.now()+condMsgs.length });
+        return {...p, conditions:(p.conditions||[]).filter(c=>c!=="Unconscious")};
+      }
+      return p;
+    });
+
     await patch(S.campaignId,{
-      messages:[...nm,dm,...extraMsgs],
+      messages:[...nm,dm,...extraMsgs,...initMsgs,...condMsgs],
       aiHistory:[...nh,{role:"assistant",content:result.text}],
       turnIndex:ni,
-      players:updatedPlayers
+      players:updatedPlayers,
+      ...combatUpdate
     });
   } catch(e) {
     await patch(S.campaignId,{messages:[...nm,{type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
@@ -1502,6 +1983,7 @@ const id   = i => document.getElementById(i);
 const q    = i => document.getElementById(i);
 const qall = s => document.querySelectorAll(s);
 
+warmupServer();
 tryAutoRejoin();
 </script>
 <style>
@@ -1883,7 +2365,48 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .equip-btn.eq-on{background:rgba(139,26,26,.15);border-color:var(--blood);color:var(--blood);opacity:1}
 .eq-spacer{width:20px;flex-shrink:0;display:inline-block}
 .inv-name{flex:1;word-break:break-word}
+
+/* ── INITIATIVE ── */
+.msg-init{font-family:'Cinzel',serif;font-size:.68rem;text-align:center;color:var(--ember);letter-spacing:.08em;opacity:.9;padding:.2rem 0;border-top:1px solid rgba(196,86,10,.2);border-bottom:1px solid rgba(196,86,10,.2);margin:.1rem 0}
+.tcn-enemy{color:var(--blood)}
+.init-num{font-size:.55rem;opacity:.6;font-family:'Cinzel',serif;margin-left:.3rem}
+.enemy-hpbar-w{background:var(--p2);border-radius:2px;height:3px;overflow:hidden;margin:.1rem 0}
+.enemy-hpbar{height:100%;background:linear-gradient(90deg,var(--blood),var(--ember));border-radius:2px;transition:width .4s}
+.tpill-enemy{background:rgba(139,26,26,.18);border-color:var(--blood);color:var(--blood);animation:pulse 1.2s infinite}
+
+/* ── CONDITIONS ── */
+.cond-badges{display:flex;flex-wrap:wrap;gap:.2rem;margin-top:.2rem}
+.cond-badge{font-family:'Cinzel',serif;font-size:.48rem;letter-spacing:.05em;background:rgba(139,26,26,.12);border:1px solid var(--blood);color:var(--blood);border-radius:2px;padding:.1rem .3rem}
+.cond-badges-lg{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.25rem}
+.cond-badge-lg{font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.06em;background:rgba(196,86,10,.1);border:1px solid var(--ember);color:var(--ember);border-radius:2px;padding:.2rem .4rem}
+.cond-danger{background:rgba(139,26,26,.15);border-color:var(--blood);color:var(--blood)}
+.trow-skipped{opacity:.5}
+.skip-badge{font-family:'Cinzel',serif;font-size:.48rem;background:var(--blood);color:var(--p0);border-radius:2px;padding:.05rem .25rem;margin-left:.2rem;letter-spacing:.05em}
+.msg-cond{font-family:'Cinzel',serif;font-size:.66rem;text-align:center;color:var(--ember);letter-spacing:.08em;opacity:.85;padding:.15rem 0}
+
+/* ── DEATH SAVES ── */
+.death-save-box{background:linear-gradient(135deg,rgba(139,26,26,.15),rgba(139,26,26,.05));border:1px solid var(--blood);border-radius:3px;padding:.7rem;margin:.4rem 0}
+.ds-title{font-family:'Cinzel',serif;font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--blood);margin-bottom:.5rem;font-weight:600}
+.ds-track{display:flex;align-items:center;gap:.3rem;margin-bottom:.5rem;flex-wrap:wrap}
+.ds-label{font-family:'Cinzel',serif;font-size:.55rem;letter-spacing:.1em;text-transform:uppercase;opacity:.7}
+.ds-pip{width:14px;height:14px;border-radius:50%;border:1px solid var(--p2);background:rgba(255,255,255,.2);transition:all .2s}
+.ds-success{background:var(--green);border-color:var(--green)}
+.ds-fail{background:var(--blood);border-color:var(--blood)}
+.ds-roll-btn{width:100%}
+.death-banner{text-align:center;padding:.7rem;font-family:'Cinzel',serif;font-size:.72rem;letter-spacing:.1em;color:var(--blood);background:rgba(139,26,26,.1);border:1px solid var(--blood);border-radius:2px;animation:pulse 2s infinite}
+.stable-banner{text-align:center;padding:.5rem;font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.1em;color:var(--green);background:rgba(58,120,64,.1);border:1px solid var(--green);border-radius:2px}
+/* ADVANTAGE / DISADVANTAGE */
+.adv-banner{font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:.1em;padding:.3rem .6rem;border-radius:2px;margin-bottom:.4rem;border:1px solid;text-align:center}
+.adv-on{background:rgba(58,120,64,.12);border-color:var(--green);color:var(--green)}
+.dis-on{background:rgba(139,26,26,.12);border-color:var(--blood);color:var(--blood)}
+
+/* ── SERVER BANNER ── */
+.server-banner{position:fixed;top:0;left:0;right:0;z-index:999;background:#1a0f0a;color:var(--p2);font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;text-align:center;padding:.45rem;border-bottom:1px solid rgba(201,168,76,.2);transition:all .4s;opacity:.9}
+.server-ok{background:#0a1a0a;color:#6ab87a;border-color:rgba(106,184,122,.3)}
+.server-err{background:#1a0808;color:#e05050;border-color:rgba(224,80,80,.3)}
 </style>
 </head>
-<body><div id="root"></div></body>
+<body>
+<div id="server-banner" class="server-banner">⏳ Connecting to Dungeon Master...</div>
+<div id="root"></div></body>
 </html>
