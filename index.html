@@ -39,11 +39,14 @@ const genCode = () => Math.random().toString(36).substring(2,8).toUpperCase();
 const esc     = s => s ? String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br/>") : "";
 
 // ── STATE ────────────────────────────────────────────────────────────────────
+// Restore session from localStorage so refresh doesn't log you out
+const _saved = (() => { try { return JSON.parse(localStorage.getItem("chronicle_session")||"{}"); } catch(e){ return {}; } })();
+
 let S = {
   screen:     "landing",
-  campaignId: null,
-  myName:     null,
-  isCreator:  false,
+  campaignId: _saved.campaignId || null,
+  myName:     _saved.myName     || null,
+  isCreator:  false, // always derived from Firestore, not stored
   campaign:   null,
   unsub:      null,
   charDraft:  { name:"", race:"Human", cls:"Fighter", backstory:"", stats:rollAll() },
@@ -52,6 +55,8 @@ let S = {
   dmgInputs:  {},
   submitting: false,
 };
+
+
 
 // ── FIRESTORE ────────────────────────────────────────────────────────────────
 const cref = id => doc(db,"campaigns",id);
@@ -114,10 +119,19 @@ function render() {
      "char-creation":rChar, lobby:rLobby, play:rPlay }[S.screen] || rLanding)();
 }
 
+function saveSession() {
+  try { localStorage.setItem("chronicle_session", JSON.stringify({ campaignId:S.campaignId, myName:S.myName })); } catch(e){}
+}
+function clearSession() {
+  try { localStorage.removeItem("chronicle_session"); } catch(e){}
+}
+
 function attach(id) {
   if(S.unsub) S.unsub();
+  saveSession();
   S.unsub = subscribe(id, camp => {
     S.campaign = camp;
+    S.isCreator = camp.creatorName === S.myName;
     routePhase();
   });
 }
@@ -131,6 +145,20 @@ function routePhase() {
   } else if(c.phase==="play") {
     go("play");
   }
+}
+
+async function tryAutoRejoin() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("chronicle_session")||"{}");
+    if(!saved.campaignId || !saved.myName) { render(); return; }
+    const camp = await fetchCamp(saved.campaignId);
+    if(!camp) { clearSession(); render(); return; }
+    const pl = camp.players.find(p=>p.name===saved.myName);
+    if(!pl) { clearSession(); render(); return; }
+    S.campaignId = saved.campaignId;
+    S.myName     = saved.myName;
+    attach(S.campaignId);
+  } catch(e) { render(); }
 }
 
 // ── LANDING ──────────────────────────────────────────────────────────────────
@@ -317,6 +345,7 @@ function rPlay() {
       <header class="phead">
         <span class="pbrand">The Chronicle</span>
         <span class="pcode">Code: <strong>${camp.id}</strong></span>
+        <button class="btn-leave" id="btn-leave">✕ Leave</button>
       </header>
       <div class="pgrid">
         <!-- NARRATIVE -->
@@ -383,6 +412,7 @@ function rPlay() {
     </div>`;
 
   const log=id("log"); if(log) log.scrollTop=log.scrollHeight;
+  const bl=id("btn-leave"); if(bl) bl.onclick=()=>{ clearSession(); S.campaignId=null; S.myName=null; S.campaign=null; if(S.unsub){S.unsub();S.unsub=null;} go("landing"); };
   const ai=id("ainp");
   if(ai){ ai.oninput=e=>S.inputText=e.target.value; ai.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();submitAction();}}; ai.focus(); }
   const bd=id("bdecl"); if(bd) bd.onclick=submitAction;
@@ -442,7 +472,7 @@ const id   = i => document.getElementById(i);
 const q    = i => document.getElementById(i);
 const qall = s => document.querySelectorAll(s);
 
-render();
+tryAutoRejoin();
 </script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -547,6 +577,8 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .pbrand{font-family:'Cinzel Decorative',serif;font-size:.92rem;color:var(--gold);text-shadow:0 0 20px rgba(201,168,76,.38)}
 .pcode{font-family:'Cinzel',serif;font-size:.56rem;letter-spacing:.14em;text-transform:uppercase;color:var(--p2);opacity:.62}
 .pcode strong{color:var(--gold);opacity:1}
+.btn-leave{background:transparent;border:1px solid rgba(139,26,26,.4);color:var(--blood);border-radius:2px;padding:.3rem .7rem;font-family:'Cinzel',serif;font-size:.55rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;opacity:.6;transition:opacity .2s}
+.btn-leave:hover{opacity:1}
 .pgrid{display:grid;grid-template-columns:1fr 255px;gap:.9rem;padding:.9rem;flex:1;align-items:start}
 @media(max-width:680px){.pgrid{grid-template-columns:1fr}}
 
