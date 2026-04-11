@@ -215,9 +215,16 @@ RULES:
 - Classic fantasy tone: dungeons, intrigue, wonder, moral weight, memorable NPCs.
 
 XP AWARDS:
-After your narrative, append a JSON block on its own line in this exact format (no markdown):
+After your narrative, append these two JSON blocks on their own lines (no markdown, no code fences):
 XP_AWARD:{"xp":0,"reason":""}
-Award XP only when something meaningful happens: defeating enemies (10-200 XP), solving puzzles (25-100 XP), major story milestones (50-500 XP), clever roleplay (10-50 XP). Award 0 for normal conversation/movement. Split XP equally among all players.`;
+HP_CHANGES:[]
+
+XP rules: Award XP only when something meaningful happens — defeating enemies (10-200 XP), solving puzzles (25-100 XP), major story milestones (50-500 XP), clever roleplay (10-50 XP). Award 0 for normal conversation/movement. Split XP equally among all players.
+
+HP_CHANGES rules: Include an entry for every player whose HP changes this turn. Format each entry as:
+{"name":"PlayerName","delta":-8,"reason":"hit by goblin sword"}
+Use negative delta for damage, positive for healing. For a long rest use delta equal to their full max HP (they fully restore). For a short rest, use a reasonable Hit Die roll. If no HP changes, leave the array empty: [].
+Always use the player's real name (not character name) exactly as listed in the party.`;
 }
 
 const PROXY = "https://dnd-proxy.onrender.com";
@@ -234,15 +241,24 @@ async function callDM(system, history) {
   });
   const data = await res.json();
   const raw  = data.content?.[0]?.text || "...";
-  // Parse XP award from response
+  // Parse XP award
   const xpMatch = raw.match(/XP_AWARD:(\{.*?\})/);
   let xpAward = 0, xpReason = "";
   if(xpMatch) {
     try { const j=JSON.parse(xpMatch[1]); xpAward=j.xp||0; xpReason=j.reason||""; } catch(e){}
   }
-  // Strip XP JSON from displayed text
-  const text = raw.replace(/\nXP_AWARD:\{.*?\}/g,"").trim();
-  return { text, xpAward, xpReason };
+  // Parse HP changes
+  const hpMatch = raw.match(/HP_CHANGES:(\[.*?\])/s);
+  let hpChanges = [];
+  if(hpMatch) {
+    try { hpChanges = JSON.parse(hpMatch[1])||[]; } catch(e){}
+  }
+  // Strip JSON blocks from displayed text
+  const text = raw
+    .replace(/\nXP_AWARD:\{.*?\}/g,"")
+    .replace(/\nHP_CHANGES:\[.*?\]/gs,"")
+    .trim();
+  return { text, xpAward, xpReason, hpChanges };
 }
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
@@ -1175,6 +1191,7 @@ function msgHtml(m) {
   if(m.type==="player") return `<div class="mpl"><div class="mlbl">↳ ${esc(m.who)}</div>${esc(m.text)}</div>`;
   if(m.type==="roll")   return `<div class="mroll">🎲 ${esc(m.text)}</div>`;
   if(m.type==="xp")     return `<div class="msg-xp">✦ ${esc(m.text)}</div>`;
+  if(m.type==="hp")     return `<div class="msg-hp ${m.text&&m.text.includes('UNCONSCIOUS')?"msg-hp-dead":""}">❤ ${esc(m.text)}</div>`;
   return "";
 }
 
@@ -1241,15 +1258,34 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
     const dm={type:"dm",text:result.text,ts:Date.now()};
     const ni=nextIdx;
 
-    // Award XP to all players
+    // Apply HP changes first
     let updatedPlayers = [...players];
+    const hpMessages = [];
+    if(result.hpChanges && result.hpChanges.length>0) {
+      result.hpChanges.forEach(change => {
+        updatedPlayers = updatedPlayers.map(p => {
+          if(p.name.toLowerCase()!==change.name.toLowerCase()) return p;
+          const oldHp = p.hp||0;
+          const newHp = Math.max(0, Math.min(p.maxHp||oldHp, oldHp + change.delta));
+          const deltaStr = change.delta>0 ? `+${change.delta}` : `${change.delta}`;
+          const status = newHp===0 ? " — UNCONSCIOUS" : "";
+          hpMessages.push({
+            type:"hp",
+            text:`${p.char?.name||p.name} ${change.delta>0?"heals":"takes"} ${Math.abs(change.delta)} ${change.delta>0?"HP":"damage"} (${change.reason}) — ${newHp}/${p.maxHp||oldHp} HP${status}`,
+            ts:Date.now()+(hpMessages.length)
+          });
+          return {...p, hp:newHp};
+        });
+      });
+    }
+
+    // Award XP
     if(result.xpAward>0) {
       updatedPlayers = updatedPlayers.map(p => {
         const newXp = (p.xp||0)+result.xpAward;
         const oldLevel = xpToLevel(p.xp||0);
         const newLevel = xpToLevel(newXp);
         if(newLevel>oldLevel) {
-          // Level up! Recalc HP and spell slots
           const newMaxHp = (CLASS_HP[p.char?.cls]||8)*newLevel + mod(p.char?.stats?.CON||10)*newLevel;
           const newSlots = (SPELL_SLOTS_BY_LEVEL[p.char?.cls]||[])[newLevel-1]||{};
           return {...p, xp:newXp, level:newLevel, maxHp:newMaxHp, hp:Math.min(p.hp||0,newMaxHp),
@@ -1257,12 +1293,19 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
         }
         return {...p, xp:newXp};
       });
-      // Add XP notification to messages
-      const xpMsg={type:"xp",text:`+${result.xpAward} XP awarded — ${result.xpReason}`,ts:Date.now()};
-      await patch(S.campaignId,{messages:[...nm,dm,xpMsg],aiHistory:[...nh,{role:"assistant",content:result.text}],turnIndex:ni,players:updatedPlayers});
-    } else {
-      await patch(S.campaignId,{messages:[...nm,dm],aiHistory:[...nh,{role:"assistant",content:result.text}],turnIndex:ni,players:updatedPlayers});
     }
+
+    // Build final message list
+    const extraMsgs = [];
+    if(hpMessages.length>0) extraMsgs.push(...hpMessages);
+    if(result.xpAward>0) extraMsgs.push({type:"xp",text:`+${result.xpAward} XP — ${result.xpReason}`,ts:Date.now()+100});
+
+    await patch(S.campaignId,{
+      messages:[...nm,dm,...extraMsgs],
+      aiHistory:[...nh,{role:"assistant",content:result.text}],
+      turnIndex:ni,
+      players:updatedPlayers
+    });
   } catch(e) {
     await patch(S.campaignId,{messages:[...nm,{type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
   }
@@ -1622,6 +1665,8 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .levelup-banner{background:rgba(107,76,139,.15);border:1px solid #9b7cc0;border-radius:2px;padding:.35rem .5rem;font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:.08em;color:#bba0e0;margin-top:.4rem;text-align:center;animation:pulse 2s infinite}
 /* XP message in log */
 .msg-xp{font-family:'Cinzel',serif;font-size:.68rem;text-align:center;color:#9b7cc0;letter-spacing:.1em;opacity:.85;padding:.2rem 0}
+.msg-hp{font-family:'Cinzel',serif;font-size:.68rem;text-align:center;color:var(--blood);letter-spacing:.08em;opacity:.9;padding:.2rem 0}
+.msg-hp-dead{color:#ff4444;font-weight:700;animation:pulse 1s infinite}
 /* Spell slot popup */
 .spell-popup{background:linear-gradient(135deg,var(--p0),var(--p1));border:1px solid var(--gold);border-radius:3px;padding:.7rem;margin-top:.5rem;box-shadow:0 4px 16px var(--sh)}
 .sp-title{font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.1em;color:var(--blood);margin-bottom:.5rem}
