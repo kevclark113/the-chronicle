@@ -299,7 +299,18 @@ function subscribe(id, cb) {
   return onSnapshot(cref(id), s => { if(s.exists()) cb(s.data()); });
 }
 
-const patch = (id, data) => updateDoc(cref(id), data);
+function stripUndefined(obj) {
+  if(Array.isArray(obj)) return obj.map(stripUndefined);
+  if(obj && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([,v]) => v !== undefined)
+        .map(([k,v]) => [k, stripUndefined(v)])
+    );
+  }
+  return obj;
+}
+const patch = (id, data) => updateDoc(cref(id), stripUndefined(data));
 
 // ── AI ───────────────────────────────────────────────────────────────────────
 function buildSystem(camp) {
