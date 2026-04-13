@@ -93,6 +93,7 @@ const CLASS_SPELL_SLOTS = {
   Ranger:  {}, Paladin:{}, Fighter:{}, Rogue:{}, Barbarian:{}
 };
 
+// CANTRIP_PICKS now derived from SPELLS_BY_LEVEL
 const CANTRIP_PICKS = { Wizard:3, Bard:2, Cleric:3, Druid:2, Warlock:2 };
 const SPELL_PICKS   = { Wizard:6, Bard:4, Cleric:999, Druid:999, Warlock:2, Ranger:0, Paladin:0 };
 // 999 = all spells known (prepared casters)
@@ -120,6 +121,124 @@ const modStr  = s => { const m=mod(s); return m>=0?`+${m}`:`${m}`; };
 const calcHp  = (cls,con) => (CLASS_HP[cls]||8)+mod(con);
 const genCode = () => Math.random().toString(36).substring(2,8).toUpperCase();
 const esc     = s => s ? String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br/>") : "";
+
+// ── FULL SPELL LISTS LEVELS 1-5 ──────────────────────────────────────────────
+const SPELLS_BY_LEVEL = {
+  Wizard: {
+    cantrips: ["Acid Splash","Blade Ward","Booming Blade","Chill Touch","Control Flames","Create Bonfire","Dancing Lights","Fire Bolt","Friends","Frostbite","Green-Flame Blade","Gust","Infestation","Light","Mage Hand","Mending","Message","Minor Illusion","Mold Earth","Poison Spray","Prestidigitation","Ray of Frost","Shape Water","Shocking Grasp","Thunderclap","True Strike"],
+    1: ["Alarm","Burning Hands","Charm Person","Chromatic Orb","Color Spray","Comprehend Languages","Detect Magic","Disguise Self","Expeditious Retreat","False Life","Feather Fall","Find Familiar","Fog Cloud","Grease","Identify","Illusory Script","Jump","Longstrider","Mage Armor","Magic Missile","Protection from Evil and Good","Ray of Sickness","Shield","Silent Image","Sleep","Tasha's Hideous Laughter","Thunderwave","Unseen Servant","Witch Bolt"],
+    2: ["Alter Self","Arcane Lock","Blindness/Deafness","Blur","Cloud of Daggers","Continual Flame","Crown of Madness","Darkness","Darkvision","Detect Thoughts","Enlarge/Reduce","Flaming Sphere","Gentle Repose","Hold Person","Invisibility","Knock","Levitate","Locate Object","Magic Mouth","Magic Weapon","Melf's Acid Arrow","Mirror Image","Misty Step","Nystul's Magic Aura","Phantasmal Force","Ray of Enfeeblement","Rope Trick","Scorching Ray","See Invisibility","Shatter","Spider Climb","Suggestion","Web"],
+    3: ["Animate Dead","Bestow Curse","Blink","Clairvoyance","Counterspell","Dispel Magic","Erupting Earth","Fear","Feign Death","Fireball","Fly","Gaseous Form","Glyph of Warding","Haste","Hypnotic Pattern","Leomund's Tiny Hut","Lightning Bolt","Magic Circle","Major Image","Nondetection","Phantom Steed","Protection from Energy","Remove Curse","Sending","Sleet Storm","Slow","Stinking Cloud","Tongues","Vampiric Touch","Water Breathing"],
+    4: ["Arcane Eye","Banishment","Black Tentacles","Blight","Confusion","Conjure Minor Elementals","Control Water","Dimension Door","Divination","Fabricate","Fire Shield","Greater Invisibility","Hallucinatory Terrain","Ice Storm","Leomund's Secret Chest","Locate Creature","Mordenkainen's Faithful Hound","Mordenkainen's Private Sanctum","Otiluke's Resilient Sphere","Phantasmal Killer","Polymorph","Stone Shape","Stoneskin","Wall of Fire"],
+    5: ["Animate Objects","Bigby's Hand","Cloudkill","Cone of Cold","Conjure Elemental","Contact Other Plane","Creation","Dominate Person","Dream","Geas","Hold Monster","Legend Lore","Mislead","Modify Memory","Passwall","Planar Binding","Rary's Telepathic Bond","Scrying","Seeming","Telekinesis","Teleportation Circle","Wall of Force","Wall of Stone"],
+  },
+  Bard: {
+    cantrips: ["Blade Ward","Dancing Lights","Friends","Light","Mage Hand","Mending","Message","Minor Illusion","Prestidigitation","Thunderclap","True Strike","Vicious Mockery"],
+    1: ["Animal Friendship","Bane","Charm Person","Color Spray","Command","Comprehend Languages","Cure Wounds","Detect Magic","Disguise Self","Dissonant Whispers","Earth Tremor","Faerie Fire","Feather Fall","Healing Word","Heroism","Identify","Illusory Script","Longstrider","Silent Image","Sleep","Speak with Animals","Tasha's Hideous Laughter","Thunderwave","Unseen Servant"],
+    2: ["Animal Messenger","Blindness/Deafness","Calm Emotions","Cloud of Daggers","Crown of Madness","Detect Thoughts","Enhance Ability","Enthrall","Heat Metal","Hold Person","Invisibility","Knock","Lesser Restoration","Locate Animals or Plants","Locate Object","Magic Mouth","Phantasmal Force","Pyrotechnics","See Invisibility","Shatter","Silence","Suggestion","Zone of Truth"],
+    3: ["Bestow Curse","Clairvoyance","Conjure Barrage","Dispel Magic","Fear","Feign Death","Glyph of Warding","Hypnotic Pattern","Leomund's Tiny Hut","Major Image","Mass Healing Word","Nondetection","Plant Growth","Sending","Slow","Speak with Dead","Speak with Plants","Stinking Cloud","Tongues"],
+    4: ["Compulsion","Confusion","Dimension Door","Freedom of Movement","Greater Invisibility","Hallucinatory Terrain","Locate Creature","Polymorph"],
+    5: ["Animate Objects","Awaken","Dominate Person","Dream","Geas","Greater Restoration","Hold Monster","Legend Lore","Mass Cure Wounds","Mislead","Modify Memory","Planar Binding","Raise Dead","Rary's Telepathic Bond","Scrying","Seeming","Skill Empowerment","Synaptic Static"],
+  },
+  Cleric: {
+    cantrips: ["Blade Ward","Guidance","Light","Mending","Resistance","Sacred Flame","Spare the Dying","Thaumaturgy","Toll the Dead","Word of Radiance"],
+    1: ["Bane","Bless","Command","Create or Destroy Water","Cure Wounds","Detect Evil and Good","Detect Magic","Detect Poison and Disease","Guiding Bolt","Healing Word","Inflict Wounds","Protection from Evil and Good","Purify Food and Drink","Sanctuary","Shield of Faith"],
+    2: ["Aid","Augury","Blindness/Deafness","Calm Emotions","Continual Flame","Enhance Ability","Find Traps","Gentle Repose","Hold Person","Lesser Restoration","Locate Object","Prayer of Healing","Protection from Poison","Silence","Spiritual Weapon","Warding Bond","Zone of Truth"],
+    3: ["Animate Dead","Beacon of Hope","Bestow Curse","Clairvoyance","Create Food and Water","Daylight","Dispel Magic","Feign Death","Glyph of Warding","Magic Circle","Mass Healing Word","Meld into Stone","Protection from Energy","Remove Curse","Revivify","Sending","Speak with Dead","Spirit Guardians","Tongues","Water Walk"],
+    4: ["Banishment","Control Water","Death Ward","Divination","Freedom of Movement","Guardian of Faith","Locate Creature","Stone Shape"],
+    5: ["Commune","Contagion","Dispel Evil and Good","Flame Strike","Geas","Greater Restoration","Hallow","Insect Plague","Legend Lore","Mass Cure Wounds","Planar Binding","Raise Dead","Scrying","Summon Celestial"],
+  },
+  Druid: {
+    cantrips: ["Control Flames","Create Bonfire","Druidcraft","Frostbite","Guidance","Gust","Infestation","Mending","Mold Earth","Poison Spray","Produce Flame","Resistance","Shape Water","Shillelagh","Thorn Whip","Thunderclap"],
+    1: ["Absorb Elements","Animal Friendship","Beast Bond","Charm Person","Create or Destroy Water","Cure Wounds","Detect Magic","Detect Poison and Disease","Earth Tremor","Entangle","Faerie Fire","Fog Cloud","Goodberry","Healing Word","Ice Knife","Jump","Longstrider","Purify Food and Drink","Snare","Speak with Animals","Thunderwave"],
+    2: ["Animal Messenger","Barkskin","Beast Sense","Darkvision","Dust Devil","Earthbind","Enhance Ability","Find Traps","Flame Blade","Flaming Sphere","Gust of Wind","Heat Metal","Hold Person","Lesser Restoration","Locate Animals or Plants","Locate Object","Moonbeam","Pass without Trace","Protection from Poison","Skywrite","Spike Growth","Warding Wind"],
+    3: ["Call Lightning","Conjure Animals","Daylight","Dispel Magic","Erupting Earth","Feign Death","Meld into Stone","Plant Growth","Protection from Energy","Sleet Storm","Speak with Plants","Tidal Wave","Wall of Water","Water Breathing","Water Walk","Wind Wall"],
+    4: ["Blight","Conjure Minor Elementals","Conjure Woodland Beings","Control Water","Dominate Beast","Freedom of Movement","Giant Insect","Grasping Vine","Hallucinatory Terrain","Ice Storm","Locate Creature","Stone Shape","Stoneskin","Wall of Fire"],
+    5: ["Antilife Shell","Awaken","Commune with Nature","Conjure Elemental","Contagion","Geas","Greater Restoration","Insect Plague","Maelstrom","Mass Cure Wounds","Planar Binding","Reincarnate","Scrying","Summon Draconic Spirit","Tree Stride","Wall of Stone","Wrath of Nature"],
+  },
+  Ranger: {
+    cantrips: [],
+    1: ["Alarm","Animal Friendship","Cure Wounds","Detect Magic","Detect Poison and Disease","Ensnaring Strike","Fog Cloud","Goodberry","Hail of Thorns","Hunter's Mark","Jump","Longstrider","Speak with Animals","Zephyr Strike"],
+    2: ["Animal Messenger","Barkskin","Beast Sense","Darkvision","Find Traps","Lesser Restoration","Locate Animals or Plants","Locate Object","Pass without Trace","Protection from Poison","Silence","Spike Growth"],
+    3: ["Conjure Animals","Conjure Barrage","Daylight","Lightning Arrow","Nondetection","Plant Growth","Protection from Energy","Speak with Plants","Water Breathing","Water Walk","Wind Wall"],
+    4: ["Conjure Woodland Beings","Freedom of Movement","Grasping Vine","Locate Creature","Stoneskin"],
+    5: ["Commune with Nature","Conjure Volley","Swift Quiver","Tree Stride","Wrath of Nature"],
+  },
+  Paladin: {
+    cantrips: [],
+    1: ["Bless","Command","Compelled Duel","Cure Wounds","Detect Evil and Good","Detect Magic","Detect Poison and Disease","Divine Favor","Heroism","Protection from Evil and Good","Purify Food and Drink","Searing Smite","Shield of Faith","Thunderous Smite","Wrathful Smite"],
+    2: ["Aid","Branding Smite","Find Steed","Lesser Restoration","Locate Object","Magic Weapon","Protection from Poison","Zone of Truth"],
+    3: ["Aura of Vitality","Blinding Smite","Create Food and Water","Crusader's Mantle","Daylight","Dispel Magic","Elemental Weapon","Magic Circle","Remove Curse","Revivify"],
+    4: ["Aura of Life","Aura of Purity","Banishment","Death Ward","Locate Creature","Staggering Smite"],
+    5: ["Banishing Smite","Circle of Power","Destructive Wave","Dispel Evil and Good","Geas","Holy Weapon","Raise Dead","Summon Celestial"],
+  },
+  Warlock: {
+    cantrips: ["Blade Ward","Booming Blade","Chill Touch","Create Bonfire","Eldritch Blast","Friends","Frostbite","Green-Flame Blade","Infestation","Mage Hand","Minor Illusion","Poison Spray","Prestidigitation","Thunderclap","True Strike"],
+    1: ["Armor of Agathys","Arms of Hadar","Charm Person","Comprehend Languages","Expeditious Retreat","Hellish Rebuke","Hex","Illusory Script","Protection from Evil and Good","Unseen Servant","Witch Bolt"],
+    2: ["Cloud of Daggers","Crown of Madness","Darkness","Enthrall","Hold Person","Invisibility","Mirror Image","Misty Step","Ray of Enfeeblement","Shatter","Spider Climb","Suggestion"],
+    3: ["Counterspell","Dispel Magic","Fear","Fly","Gaseous Form","Hunger of Hadar","Hypnotic Pattern","Magic Circle","Major Image","Remove Curse","Tongues","Vampiric Touch"],
+    4: ["Banishment","Blight","Dimension Door","Hallucinatory Terrain"],
+    5: ["Contact Other Plane","Dream","Hold Monster","Jallarzi's Storm of Radiance","Mislead","Modify Memory","Planar Binding","Scrying","Synaptic Static","Telekinesis"],
+  },
+  Fighter:   { cantrips:[], 1:[], 2:[], 3:[], 4:[], 5:[] },
+  Rogue:     { cantrips:[], 1:[], 2:[], 3:[], 4:[], 5:[] },
+  Barbarian: { cantrips:[], 1:[], 2:[], 3:[], 4:[], 5:[] },
+};
+
+// Spell slot table by class and level (levels 1-5)
+const SPELL_SLOTS_FULL = {
+  Wizard:    [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2}],
+  Bard:      [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2}],
+  Cleric:    [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2}],
+  Druid:     [{},{1:2},{1:3},{1:4,2:2},{1:4,2:3},{1:4,2:3,3:2}],
+  Ranger:    [{},{},{1:2},{1:3},{1:3,2:1},{1:4,2:2}],
+  Paladin:   [{},{},{1:2},{1:3},{1:3,2:1},{1:4,2:2}],
+  Warlock:   [{},{1:1},{1:2},{1:2,2:1},{1:2,2:2},{1:2,2:2,3:1}],
+  Fighter:   [{},{},{},{},{},{}],
+  Rogue:     [{},{},{},{},{},{}],
+  Barbarian: [{},{},{},{},{},{}],
+};
+
+// How many spells known per level (for known-spell casters)
+const SPELLS_KNOWN_TABLE = {
+  Wizard:    [0,6,8,10,12,14],   // spells in spellbook (can prepare INT mod + level)
+  Bard:      [0,4,5,6,7,8],
+  Warlock:   [0,2,3,4,5,6],
+  Ranger:    [0,0,2,3,3,4],
+  Paladin:   [0,0,2,3,3,4],
+  Cleric:    null, // prepared caster — knows all
+  Druid:     null, // prepared caster — knows all
+  Fighter:   null,
+  Rogue:     null,
+  Barbarian: null,
+};
+
+// New spells gained when leveling up
+function getNewSpellsOnLevelUp(cls, newLevel) {
+  const table = SPELLS_KNOWN_TABLE[cls];
+  if(!table) return 0; // prepared caster or non-caster
+  const prev = table[newLevel-1]||0;
+  const curr = table[newLevel]||0;
+  return Math.max(0, curr-prev);
+}
+
+// Get all spells available to a class at or below a given spell level
+function getSpellsForClassLevel(cls, maxSpellLevel) {
+  const lists = SPELLS_BY_LEVEL[cls]||{};
+  const result = [];
+  for(let i=1; i<=maxSpellLevel; i++) {
+    result.push(...(lists[i]||[]));
+  }
+  return result;
+}
+
+// Get max spell level a class can cast at character level
+function maxSpellLevelForCharLevel(cls, charLevel) {
+  const slots = SPELL_SLOTS_FULL[cls]?.[charLevel]||{};
+  const levels = Object.keys(slots).map(Number);
+  return levels.length ? Math.max(...levels) : 0;
+}
+
 
 // ── XP & LEVELING ─────────────────────────────────────────────────────────────
 const XP_THRESHOLDS = [0,300,900,2700,6500,14000,23000,34000,48000,64000];
@@ -332,6 +451,7 @@ PARTY:\n${chars}
 
 RULES:
 - Narrate vividly in 2–4 paragraphs. Make the world, NPCs, and atmosphere feel real and alive.
+- SPELL ENFORCEMENT: If a player attempts to cast a spell not in their known spells list, narrate that it fails — they simply don't know that spell. If they have no remaining slots for that spell level, narrate that their magical energy is spent. Never grant spell effects outside a player's actual known spells or available slots.
 - This is strictly turn-based. One player acts per turn; you respond, then the next player goes.
 - Always end your response by clearly naming whose turn it is next (e.g. "What do you do, ${cur?.name}?").
 - When rolls are needed, name the player and die explicitly (e.g. "Roll a d20 for Stealth, ${cur?.name}.").
@@ -586,8 +706,11 @@ function rLevelUp() {
   const c = me.char;
   const newLevel = me.level||1;
   const features = (LEVEL_FEATURES[c.cls]||{})[newLevel]||[];
-  const newSpellCount = NEW_SPELLS_PER_LEVEL[c.cls]||0;
-  const availableSpells = (SPELLS_LV1[c.cls]||[]).filter(s=>!(me.sheet?.spells||[]).includes(s));
+  const newSpellCount = getNewSpellsOnLevelUp(c.cls, newLevel);
+  const maxSlotLevel = maxSpellLevelForCharLevel(c.cls, newLevel);
+  const isPrepared = SPELLS_KNOWN_TABLE[c.cls]===null && maxSlotLevel>0;
+  const allClassSpells = getSpellsForClassLevel(c.cls, maxSlotLevel);
+  const availableSpells = allClassSpells.filter(s=>!(me.sheet?.spells||[]).includes(s));
   const hasASI = features.some(f=>f.includes("ASI"));
 
   q("root").innerHTML = `
@@ -606,16 +729,25 @@ function rLevelUp() {
           <div class="lu-feature">Max HP increased to <strong>${me.maxHp}</strong> (${CLASS_HP[c.cls]}d${CLASS_HP[c.cls]} + CON modifier per level)</div>
         </div>
 
-        ${newSpellCount>0 && availableSpells.length>0 ? `
+        ${isPrepared && maxSlotLevel>0 ? `
         <div class="levelup-section">
-          <div class="lu-hdr">New Spells — Choose ${newSpellCount}</div>
+          <div class="lu-hdr">Spellcasting — Prepared Caster</div>
+          <div class="lu-feature">As a ${esc(c.cls)}, you prepare spells each day. You now have access to all ${esc(c.cls)} spells up to level ${maxSlotLevel}. Your full spell list is available in the Spells tab of your character sheet.</div>
+          <div class="lu-feature" style="margin-top:.3rem">Spells available: ${allClassSpells.length} spells across ${maxSlotLevel} spell level${maxSlotLevel>1?"s":""}</div>
+        </div>` : newSpellCount>0 && availableSpells.length>0 ? `
+        <div class="levelup-section">
+          <div class="lu-hdr">New Spells — Choose ${newSpellCount} (up to level ${maxSlotLevel})</div>
           <div id="spell-picks-count" class="spell-count">0/${newSpellCount} chosen</div>
           <div class="spell-grid">
-            ${availableSpells.slice(0,20).map(s=>`<label class="spell-check" id="lus_${s.replace(/\s/g,'_')}">
+            ${availableSpells.map(s=>`<label class="spell-check">
               <input type="checkbox" data-spell="${esc(s)}" class="lu-spbox"/> ${esc(s)}
             </label>`).join("")}
           </div>
-        </div>` : ""}
+        </div>` : newSpellCount===0 && maxSlotLevel===0 ? "" : `
+        <div class="levelup-section">
+          <div class="lu-hdr">Spellcasting</div>
+          <div class="lu-feature" style="opacity:.6">No new spells to select at this level.</div>
+        </div>`}
 
         ${hasASI ? `
         <div class="levelup-section">
@@ -970,14 +1102,16 @@ function stepEquipment(d) {
 
 function stepSpells(d) {
   const cls = d.cls;
-  const cantripList = CANTRIPS[cls];
-  const spellList   = SPELLS_LV1[cls];
+  const cantripList = SPELLS_BY_LEVEL[cls]?.cantrips||[];
+  const spellList   = SPELLS_BY_LEVEL[cls]?.[1]||[];
   const cantripPicks = CANTRIP_PICKS[cls] || 0;
   const spellPicks   = SPELL_PICKS[cls];
+  const isPreparedCaster = SPELLS_KNOWN_TABLE[cls]===null;
   const chosenCan = d.cantrips || [];
   const chosenSp  = d.spells   || [];
 
-  if(!cantripList && !spellList) return `<div class="no-spells"><p>${cls}s do not cast spells at level 1.</p><p style="margin-top:.5rem;opacity:.7">Your class features (like Rage or Second Wind) are already noted on your sheet.</p></div>`;
+  if(!cantripList.length && !spellList.length) return `<div class="no-spells"><p>${cls}s do not cast spells.</p><p style="margin-top:.5rem;opacity:.7">Your class features (like Rage or Second Wind) are already noted on your sheet.</p></div>`;
+  const isPrepared = SPELLS_KNOWN_TABLE[cls]===null && spellList.length>0;
 
   const isPrepared = spellPicks === 999;
   return `
@@ -2031,6 +2165,20 @@ function detectSpellUse(action, knownSpells) {
   return knownSpells.find(s => lower.includes(s.toLowerCase())) || null;
 }
 
+function detectUnknownSpell(action, knownSpells) {
+  // Check if action mentions any spell from the full spell database that player doesn't know
+  const lower = action.toLowerCase();
+  const allSpells = Object.values(SPELLS_BY_LEVEL).flatMap(cls =>
+    Object.values(cls).flat()
+  );
+  const mentioned = allSpells.find(s => lower.includes(s.toLowerCase()));
+  if(!mentioned) return null;
+  // If it's mentioned but not in known spells, it's unknown
+  const known = (knownSpells||[]).map(s=>s.toLowerCase());
+  if(!known.includes(mentioned.toLowerCase())) return mentioned;
+  return null;
+}
+
 async function submitAction(confirmedSlot, useBonusAction=false) {
   if(S.submitting) return;
   const action=S.inputText.trim(); if(!action) return;
@@ -2039,6 +2187,21 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
   const me=camp.players.find(p=>p.name===S.myName);
   const sheet=me?.sheet||{};
   const char=me?.char||{};
+
+  // App-layer spell enforcement warning
+  if(confirmedSlot===undefined) {
+    const unknownSpell = detectUnknownSpell(action, sheet.spells||[]);
+    if(unknownSpell && !S.spellWarningDismissed) {
+      S.spellWarningDismissed = false;
+      // Show warning — user can still proceed
+      if(!window.__spellWarnShown) {
+        window.__spellWarnShown = true;
+        const proceed = confirm(`"${unknownSpell}" isn't in ${char.name||S.myName}'s known spells. The DM will rule this fails. Declare anyway?`);
+        window.__spellWarnShown = false;
+        if(!proceed) { S.submitting=false; return; }
+      }
+    }
+  }
 
   // Spell slot detection — if a spell is detected and no slot confirmed yet, show popup
   if(confirmedSlot===undefined) {
