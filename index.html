@@ -397,9 +397,23 @@ async function warmupServer() {
   }
 }
 
+function getApiKey() {
+  return localStorage.getItem("chronicle_api_key")||"";
+}
+
+function saveApiKey(key) {
+  localStorage.setItem("chronicle_api_key", key.trim());
+}
+
+function clearApiKey() {
+  localStorage.removeItem("chronicle_api_key");
+}
+
 async function callDM(system, history) {
+  const apiKey = getApiKey();
+  if(!apiKey) { go("api-key"); throw new Error("No API key set"); }
   const res  = await fetch(`${PROXY}/api/dm`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
+    method:"POST", headers:{"Content-Type":"application/json","X-API-Key":apiKey},
     body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1200, system, messages:history })
   });
   const data = await res.json();
@@ -470,7 +484,7 @@ const go = screen => { S.screen=screen; render(); };
 
 function render() {
   ({ landing:rLanding, "new-campaign":rNew, "join-campaign":rJoin,
-     "char-creation":rChar, lobby:rLobby, play:rPlay }[S.screen] || rLanding)();
+     "char-creation":rChar, lobby:rLobby, play:rPlay, "api-key":rApiKey, "level-up":rLevelUp }[S.screen] || rLanding)();
 }
 
 function saveSession() {
@@ -486,6 +500,7 @@ function attach(id) {
   S.unsub = subscribe(id, camp => {
     S.campaign = camp;
     S.isCreator = camp.creatorName === S.myName;
+    saveCampaignToHistory(camp, S.myName);
     routePhase();
   });
 }
@@ -497,6 +512,9 @@ function routePhase() {
     const me = c.players.find(p=>p.name===S.myName);
     go(me?.char ? "lobby" : "char-creation");
   } else if(c.phase==="play") {
+    // Check if this player needs to level up
+    const me = c.players.find(p=>p.name===S.myName);
+    if(me?.levelUpPending) { go("level-up"); return; }
     go("play");
   }
 }
@@ -515,6 +533,215 @@ async function tryAutoRejoin() {
   } catch(e) { render(); }
 }
 
+function getCampaignHistory() {
+  try { return JSON.parse(localStorage.getItem("chronicle_history")||"[]"); } catch(e){ return []; }
+}
+
+function saveCampaignToHistory(camp, myName) {
+  try {
+    const history = getCampaignHistory().filter(c=>c.id!==camp.id);
+    history.unshift({
+      id: camp.id,
+      myName,
+      playerNames: camp.players.map(p=>p.name),
+      phase: camp.phase,
+      msgCount: (camp.messages||[]).length,
+      lastPlayed: Date.now(),
+    });
+    localStorage.setItem("chronicle_history", JSON.stringify(history.slice(0,5)));
+  } catch(e){}
+}
+
+async function resumeCampaign(id, myName) {
+  const camp = await fetchCamp(id);
+  if(!camp){ alert("Campaign not found — it may have been deleted."); return; }
+  const pl = camp.players.find(p=>p.name===myName);
+  if(!pl){ alert(`Player "${myName}" not found in this campaign.`); return; }
+  S.campaignId = id;
+  S.myName = myName;
+  attach(id);
+}
+
+// ── LEVEL UP ─────────────────────────────────────────────────────────────────
+const LEVEL_FEATURES = {
+  Fighter:   {2:["Action Surge (1/rest — take extra action)"],3:["Martial Archetype (choose subclass)"],4:["ASI: +2 to one stat or +1 to two"],5:["Extra Attack (attack twice per Attack action)"]},
+  Wizard:    {2:["Arcane Tradition (choose subclass)"],3:[],4:["ASI: +2 to one stat or +1 to two"],5:["3rd-level spells unlocked"]},
+  Rogue:     {2:["Cunning Action (dash/disengage/hide as bonus action)"],3:["Roguish Archetype (choose subclass)"],4:["ASI: +2 to one stat or +1 to two"],5:["Uncanny Dodge (halve damage as reaction)"]},
+  Cleric:    {2:["Channel Divinity (domain power)"],3:[],4:["ASI: +2 to one stat or +1 to two"],5:["Destroy Undead"]},
+  Ranger:    {2:["Fighting Style","Spellcasting"],3:["Ranger Archetype (choose subclass)","Primeval Awareness"],4:["ASI: +2 to one stat or +1 to two"],5:["Extra Attack"]},
+  Paladin:   {2:["Fighting Style","Spellcasting","Divine Smite"],3:["Sacred Oath (choose subclass)"],4:["ASI: +2 to one stat or +1 to two"],5:["Extra Attack"]},
+  Bard:      {2:["Jack of All Trades","Song of Rest"],3:["Bard College (choose subclass)","Expertise (2 more skills)"],4:["ASI: +2 to one stat or +1 to two"],5:["Font of Inspiration"]},
+  Druid:     {2:["Wild Shape improvement","Druid Circle (choose subclass)"],3:[],4:["ASI: +2 to one stat or +1 to two","Wild Shape CR 1/2"],5:["3rd-level spells unlocked"]},
+  Barbarian: {2:["Reckless Attack","Danger Sense"],3:["Primal Path (choose subclass)"],4:["ASI: +2 to one stat or +1 to two"],5:["Extra Attack","Fast Movement (+10ft speed)"]},
+  Warlock:   {2:["Eldritch Invocations (choose 2)"],3:["Pact Boon (Pact of the Chain/Blade/Tome)","2nd-level spell slots"],4:["ASI: +2 to one stat or +1 to two"],5:["3rd-level spells unlocked"]},
+};
+
+const NEW_SPELLS_PER_LEVEL = { Wizard:2, Bard:1, Warlock:1 };
+
+function rLevelUp() {
+  const camp = S.campaign;
+  if(!camp) { go("play"); return; }
+  const me = camp.players.find(p=>p.name===S.myName);
+  if(!me||!me.char) { go("play"); return; }
+  const c = me.char;
+  const newLevel = me.level||1;
+  const features = (LEVEL_FEATURES[c.cls]||{})[newLevel]||[];
+  const newSpellCount = NEW_SPELLS_PER_LEVEL[c.cls]||0;
+  const availableSpells = (SPELLS_LV1[c.cls]||[]).filter(s=>!(me.sheet?.spells||[]).includes(s));
+  const hasASI = features.some(f=>f.includes("ASI"));
+
+  q("root").innerHTML = `
+    <div class="fcenter">
+      <div class="card wide">
+        <h2 class="ch">🎉 Level Up! — Level ${newLevel} ${esc(c.cls)}</h2>
+        <p class="csub">${esc(c.name)} has grown in power. Review your new abilities.</p>
+
+        <div class="levelup-section">
+          <div class="lu-hdr">New Features</div>
+          ${features.length ? features.map(f=>`<div class="lu-feature">✦ ${esc(f)}</div>`).join("") : `<div class="lu-feature" style="opacity:.5">No new features at this level.</div>`}
+        </div>
+
+        <div class="levelup-section">
+          <div class="lu-hdr">Hit Points</div>
+          <div class="lu-feature">Max HP increased to <strong>${me.maxHp}</strong> (${CLASS_HP[c.cls]}d${CLASS_HP[c.cls]} + CON modifier per level)</div>
+        </div>
+
+        ${newSpellCount>0 && availableSpells.length>0 ? `
+        <div class="levelup-section">
+          <div class="lu-hdr">New Spells — Choose ${newSpellCount}</div>
+          <div id="spell-picks-count" class="spell-count">0/${newSpellCount} chosen</div>
+          <div class="spell-grid">
+            ${availableSpells.slice(0,20).map(s=>`<label class="spell-check" id="lus_${s.replace(/\s/g,'_')}">
+              <input type="checkbox" data-spell="${esc(s)}" class="lu-spbox"/> ${esc(s)}
+            </label>`).join("")}
+          </div>
+        </div>` : ""}
+
+        ${hasASI ? `
+        <div class="levelup-section">
+          <div class="lu-hdr">Ability Score Improvement</div>
+          <p class="csub">Choose +2 to one ability or +1 to two different abilities.</p>
+          <div class="asi-grid">
+            ${Object.entries(c.stats).map(([k,v])=>`
+              <div class="asi-box">
+                <div class="msk">${k}</div>
+                <div class="msv" id="asi-val-${k}">${v}</div>
+                <div class="asi-btns">
+                  <button class="asi-btn" data-stat="${k}" data-amt="1">+1</button>
+                  <button class="asi-btn" data-stat="${k}" data-amt="2">+2</button>
+                </div>
+              </div>`).join("")}
+          </div>
+          <div id="asi-status" class="csub" style="margin-top:.5rem">No ASI applied yet (optional)</div>
+        </div>` : ""}
+
+        <button class="btn-gold full" id="btn-levelup-done">⚔ Continue Adventure</button>
+        <div class="err" id="er"></div>
+      </div>
+    </div>`;
+
+  // Track selections
+  let newSpells = [];
+  let asiApplied = {};
+
+  qall(".lu-spbox").forEach(cb => {
+    cb.onchange = () => {
+      newSpells = [...qall(".lu-spbox:checked")].map(c=>c.dataset.spell);
+      if(newSpells.length>newSpellCount){ cb.checked=false; newSpells = [...qall(".lu-spbox:checked")].map(c=>c.dataset.spell); return; }
+      id("spell-picks-count").textContent = `${newSpells.length}/${newSpellCount} chosen`;
+      qall(".lu-spbox").forEach(c=>{ c.closest("label").classList.toggle("sp-on",c.checked); });
+    };
+  });
+
+  qall(".asi-btn").forEach(btn => {
+    btn.onclick = () => {
+      const stat = btn.dataset.stat, amt = parseInt(btn.dataset.amt);
+      const totalPoints = Object.values(asiApplied).reduce((a,b)=>a+b,0);
+      if(totalPoints+amt>2){ id("er").textContent="You can only spend 2 total ASI points."; return; }
+      if(amt===2 && totalPoints>0){ id("er").textContent="+2 must be applied to a single stat with no other increases."; return; }
+      id("er").textContent="";
+      asiApplied = amt===2 ? {[stat]:2} : {...asiApplied, [stat]:(asiApplied[stat]||0)+amt};
+      // Update displayed values
+      Object.entries(asiApplied).forEach(([k,v])=>{ const el=id(`asi-val-${k}`); if(el) el.textContent=c.stats[k]+v; });
+      id("asi-status").textContent = `ASI: ${Object.entries(asiApplied).map(([k,v])=>"+"+v+" "+k).join(", ")}`;
+    };
+  });
+
+  id("btn-levelup-done").onclick = async () => {
+    const btn = id("btn-levelup-done");
+    btn.disabled=true; btn.textContent="Saving...";
+    const camp=S.campaign, me=camp.players.find(p=>p.name===S.myName);
+
+    // Apply new spells
+    const updatedSheet = {...(me.sheet||{})};
+    if(newSpells.length>0) updatedSheet.spells = [...(updatedSheet.spells||[]), ...newSpells];
+
+    // Apply ASI
+    const updatedStats = {...c.stats};
+    Object.entries(asiApplied).forEach(([k,v])=>{ updatedStats[k]=(updatedStats[k]||10)+v; });
+
+    // Add new features to char
+    const updatedFeatures = [...(c.features||[]), ...features.filter(f=>!f.includes("ASI"))];
+
+    const players = camp.players.map(p => p.name===S.myName ? {
+      ...p,
+      char: {...c, stats:updatedStats, features:updatedFeatures},
+      sheet: updatedSheet,
+      levelUpPending: false,
+    } : p);
+
+    await patch(S.campaignId, {players});
+
+    // Add level up message to narrative
+    const luMsg = {type:"xp", text:`${c.name} reaches Level ${newLevel}! ${features.length?features[0]:"New power awakens."}`, ts:Date.now()};
+    const messages = [...camp.messages, luMsg];
+    await patch(S.campaignId, {messages});
+
+    go("play");
+  };
+}
+
+// ── API KEY ──────────────────────────────────────────────────────────────────
+function rApiKey() {
+  const existing = getApiKey();
+  q("root").innerHTML = `
+    <div class="fcenter">
+      <div class="card wide">
+        <h2 class="ch">🔑 Anthropic API Key</h2>
+        <p class="csub">The Chronicle uses Claude as your Dungeon Master. Each player who creates a campaign needs their own Anthropic API key — usage is billed directly to you at a few cents per session.</p>
+        <div class="api-key-info">
+          <div class="api-step">1. Go to <strong>console.anthropic.com</strong> → API Keys → Create Key</div>
+          <div class="api-step">2. Add billing credits ($5 lasts many sessions)</div>
+          <div class="api-step">3. Paste your key below — it stays in your browser only</div>
+        </div>
+        <div class="f">
+          <label>Your API Key <span class="dim">(starts with sk-ant-...)</span></label>
+          <input id="api-key-inp" type="password" placeholder="sk-ant-api03-..." value="${existing}"/>
+        </div>
+        <div class="api-privacy">🔒 Your key is stored only in your browser — never sent to our servers.</div>
+        <button class="btn-gold full" id="btn-save-key">Save Key & Continue</button>
+        ${existing?`<button class="btn-ghost" id="btn-clear-key">Clear Saved Key</button>`:""}
+        <button class="btn-ghost" id="btn-back-key">← Back</button>
+        <div class="err" id="er"></div>
+      </div>
+    </div>`;
+
+  id("btn-save-key").onclick = () => {
+    const key = id("api-key-inp").value.trim();
+    if(!key.startsWith("sk-ant-")){ id("er").textContent="That doesn't look like a valid Anthropic key (should start with sk-ant-)."; return; }
+    saveApiKey(key);
+    // Return to wherever they came from
+    if(S.campaign) routePhase();
+    else go("landing");
+  };
+  const clearBtn = id("btn-clear-key");
+  if(clearBtn) clearBtn.onclick = () => { clearApiKey(); go("api-key"); };
+  id("btn-back-key").onclick = () => {
+    if(S.campaign) routePhase();
+    else go("landing");
+  };
+}
+
 // ── LANDING ──────────────────────────────────────────────────────────────────
 function rLanding() {
   q("root").innerHTML = `
@@ -527,11 +754,31 @@ function rLanding() {
         <div class="land-btns">
           <button class="btn-gold" id="b-new">⚔&thinsp; Start New Campaign</button>
           <button class="btn-blood" id="b-join">🗡&thinsp; Join Existing Campaign</button>
+          <button class="btn-ghost" id="b-key" style="opacity:.7;font-size:.58rem">🔑 API Key Settings</button>
         </div>
+        ${(()=>{
+          const hist = getCampaignHistory();
+          if(!hist.length) return "";
+          return `<div class="resume-section">
+            <div class="resume-title">↩ Resume Campaign</div>
+            ${hist.map(c=>`
+              <div class="resume-row" data-id="${c.id}" data-name="${c.myName}">
+                <div class="resume-info">
+                  <div class="resume-code">${c.id}</div>
+                  <div class="resume-meta">${c.myName} · ${c.playerNames.join(", ")} · ${c.msgCount} messages</div>
+                </div>
+                <button class="btn-resume" data-id="${c.id}" data-name="${c.myName}">Resume →</button>
+              </div>`).join("")}
+          </div>`;
+        })()}
       </div>
     </div>`;
-  id("b-new").onclick  = () => go("new-campaign");
+  id("b-new").onclick  = () => { if(!getApiKey()) go("api-key"); else go("new-campaign"); };
   id("b-join").onclick = () => go("join-campaign");
+  id("b-key").onclick  = () => go("api-key");
+  qall(".btn-resume").forEach(btn => {
+    btn.onclick = () => resumeCampaign(btn.dataset.id, btn.dataset.name);
+  });
 }
 
 // ── NEW CAMPAIGN ──────────────────────────────────────────────────────────────
@@ -2415,6 +2662,32 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .server-banner{position:fixed;top:0;left:0;right:0;z-index:999;background:#1a0f0a;color:var(--p2);font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;text-align:center;padding:.45rem;border-bottom:1px solid rgba(201,168,76,.2);transition:all .4s;opacity:.9}
 .server-ok{background:#0a1a0a;color:#6ab87a;border-color:rgba(106,184,122,.3)}
 .server-err{background:#1a0808;color:#e05050;border-color:rgba(224,80,80,.3)}
+
+/* ── API KEY SCREEN ── */
+.api-key-info{background:rgba(255,255,255,.18);border:1px solid var(--p2);border-radius:2px;padding:.8rem;margin-bottom:1rem}
+.api-step{font-size:.8rem;padding:.25rem 0;line-height:1.5}
+.api-step strong{font-family:'Cinzel',serif;font-size:.75rem}
+.api-privacy{font-size:.7rem;font-style:italic;opacity:.55;text-align:center;margin:.5rem 0;color:var(--green)}
+
+/* ── RESUME CAMPAIGNS ── */
+.resume-section{margin-top:1.5rem;border-top:1px solid rgba(201,168,76,.3);padding-top:1rem}
+.resume-title{font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);opacity:.7;margin-bottom:.6rem}
+.resume-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem .6rem;background:rgba(255,255,255,.12);border:1px solid var(--p2);border-radius:2px;margin-bottom:.35rem;gap:.5rem}
+.resume-info{flex:1}
+.resume-code{font-family:'Cinzel Decorative',serif;font-size:.85rem;color:var(--blood);letter-spacing:.15em}
+.resume-meta{font-size:.68rem;font-style:italic;opacity:.65;margin-top:.1rem}
+.btn-resume{background:linear-gradient(135deg,var(--gold),#a8862e);border:1px solid var(--gold2);border-radius:2px;padding:.3rem .65rem;font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;color:var(--ink);font-weight:600;white-space:nowrap;transition:all .2s;flex-shrink:0}
+.btn-resume:hover{background:linear-gradient(135deg,var(--gold2),var(--gold));box-shadow:0 2px 8px rgba(201,168,76,.3)}
+
+/* ── LEVEL UP ── */
+.levelup-section{background:rgba(255,255,255,.15);border:1px solid var(--p2);border-radius:2px;padding:.8rem;margin-bottom:.8rem}
+.lu-hdr{font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;color:var(--blood);margin-bottom:.5rem;opacity:.85}
+.lu-feature{font-size:.82rem;padding:.2rem 0;line-height:1.5;color:#3a2010}
+.asi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;margin:.6rem 0}
+.asi-box{background:rgba(255,255,255,.22);border:1px solid var(--p2);border-radius:2px;text-align:center;padding:.4rem .2rem}
+.asi-btns{display:flex;gap:.2rem;justify-content:center;margin-top:.3rem}
+.asi-btn{background:rgba(201,168,76,.15);border:1px solid var(--gold);border-radius:2px;padding:.15rem .35rem;font-family:'Cinzel',serif;font-size:.58rem;cursor:pointer;color:var(--ink);transition:all .15s}
+.asi-btn:hover{background:linear-gradient(135deg,var(--gold2),var(--gold))}
 </style>
 </head>
 <body>
