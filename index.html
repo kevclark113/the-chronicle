@@ -1113,7 +1113,6 @@ function stepSpells(d) {
   if(!cantripList.length && !spellList.length) return `<div class="no-spells"><p>${cls}s do not cast spells.</p><p style="margin-top:.5rem;opacity:.7">Your class features (like Rage or Second Wind) are already noted on your sheet.</p></div>`;
   const isPrepared = SPELLS_KNOWN_TABLE[cls]===null && spellList.length>0;
 
-  const isPrepared = spellPicks === 999;
   return `
     ${cantripList ? `
       <div class="spell-section">
