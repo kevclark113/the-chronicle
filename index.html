@@ -24,7 +24,33 @@ const db  = getFirestore(app);
 
 // ── CONSTANTS ────────────────────────────────────────────────────────────────
 // ── 5E DATA ──────────────────────────────────────────────────────────────────
-const RACES   = ["Human","Elf","Dwarf","Halfling","Half-Orc","Gnome","Tiefling","Dragonborn"];
+const RACES = ["Aasimar","Bugbear","Dragonborn","Dwarf","Elf","Firbolg","Gnome","Goblin","Goliath","Half-Elf","Half-Orc","Halfling","Hobgoblin","Human","Kenku","Kobold","Lizardfolk","Orc","Tabaxi","Tiefling","Tortle","Triton","Yuan-ti Pureblood"];
+
+const SUBRACES = {
+  Aasimar:           ["Fallen","Protector","Scourge"],
+  Bugbear:           ["—"],
+  Dragonborn:        ["Black (Acid)","Blue (Lightning)","Brass (Fire)","Bronze (Lightning)","Copper (Acid)","Gold (Fire)","Green (Poison)","Red (Fire)","Silver (Cold)","White (Cold)"],
+  Dwarf:             ["Hill Dwarf","Mountain Dwarf","Duergar"],
+  Elf:               ["High Elf","Wood Elf","Drow","Eladrin","Sea Elf","Shadar-kai"],
+  Firbolg:           ["—"],
+  Gnome:             ["Forest Gnome","Rock Gnome","Deep Gnome"],
+  Goblin:            ["—"],
+  Goliath:           ["—"],
+  "Half-Elf":        ["Standard","Aquatic","Drow","Moon/Sun Elf","Wood Elf"],
+  "Half-Orc":        ["—"],
+  Halfling:          ["Lightfoot","Stout","Ghostwise"],
+  Hobgoblin:         ["—"],
+  Human:             ["Standard","Variant"],
+  Kenku:             ["—"],
+  Kobold:            ["—"],
+  Lizardfolk:        ["—"],
+  Orc:               ["—"],
+  Tabaxi:            ["—"],
+  Tiefling:          ["Asmodeus","Baalzebul","Dispater","Fierna","Glasya","Levistus","Mammon","Mephistopheles","Zariel"],
+  Tortle:            ["—"],
+  Triton:            ["—"],
+  "Yuan-ti Pureblood":["—"],
+};
 const CLASSES = ["Fighter","Wizard","Rogue","Cleric","Ranger","Paladin","Bard","Druid","Barbarian","Warlock"];
 const CLASS_HP= {Fighter:10,Wizard:6,Rogue:8,Cleric:8,Ranger:10,Paladin:10,Bard:8,Druid:8,Barbarian:12,Warlock:8};
 const DICE    = [4,6,8,10,12,20,100];
@@ -380,7 +406,7 @@ let S = {
   isCreator:  false, // always derived from Firestore, not stored
   campaign:   null,
   unsub:      null,
-  charDraft:  { name:"", race:"Human", cls:"Fighter", backstory:"", stats:rollAll() },
+  charDraft:  { name:"", race:"Human", subrace:"Standard", cls:"Fighter", backstory:"", stats:rollAll() },
   diceResult: null,
   inputText:  "",
   dmgInputs:  {},
@@ -442,7 +468,7 @@ function buildSystem(camp) {
     const availSlots = Object.entries(slots).map(([l,t])=>`Lv${l}:${t-(usedSlots[l]||0)}/${t}`).join(" ");
     const spellList = (sheet.spells||[]).slice(0,8).join(", ");
     const inv = (sheet.inventory||[]).slice(0,6).join(", ");
-    return `${p.name} plays ${c.name}, ${c.race} ${c.cls} (bg: ${c.background||"none"}) — STR${c.stats.STR} DEX${c.stats.DEX} CON${c.stats.CON} INT${c.stats.INT} WIS${c.stats.WIS} CHA${c.stats.CHA}. HP:${p.hp}/${p.maxHp}.${availSlots?` Spell slots: ${availSlots}.`:""}${spellList?` Spells: ${spellList}.`:""}${inv?` Inventory: ${inv}.`:""}${c.skills?.length?` Proficient: ${c.skills.slice(0,5).join(", ")}.`:""}${c.backstory?` ${c.backstory}`:""}`;
+    return `${p.name} plays ${c.name}, ${c.race}${c.subrace&&c.subrace!=="—"?" ("+c.subrace+")":""} ${c.cls} (bg: ${c.background||"none"}) — STR${c.stats.STR} DEX${c.stats.DEX} CON${c.stats.CON} INT${c.stats.INT} WIS${c.stats.WIS} CHA${c.stats.CHA}. HP:${p.hp}/${p.maxHp}.${availSlots?` Spell slots: ${availSlots}.`:""}${spellList?` Spells: ${spellList}.`:""}${inv?` Inventory: ${inv}.`:""}${c.skills?.length?` Proficient: ${c.skills.slice(0,5).join(", ")}.`:""}${c.backstory?` ${c.backstory}`:""}`;
   }).join("\n");
   const cur = camp.players[camp.turnIndex % camp.players.length];
   return `You are the sole Dungeon Master for a classic fantasy D&D 5e campaign with ${camp.players.length} players. There is no human DM.
@@ -1028,6 +1054,13 @@ function stepRaceClass(d) {
       <div class="f"><label>Race</label><select id="cc-r">${RACES.map(r=>`<option${r===d.race?" selected":""}>${r}</option>`).join("")}</select></div>
       <div class="f"><label>Class</label><select id="cc-c">${CLASSES.map(c=>`<option${c===d.cls?" selected":""}>${c}</option>`).join("")}</select></div>
     </div>
+    <div class="f" id="subrace-field">
+      <label>Subrace</label>
+      <select id="cc-sr">
+        ${(SUBRACES[d.race]||["—"]).map(s=>`<option${s===(d.subrace||"")?" selected":""}>${s}</option>`).join("")}
+      </select>
+      ${(SUBRACES[d.race]||["—"])[0]==="—"?`<div class="subrace-note">No subraces for ${d.race}.</div>`:""}
+    </div>
     <div class="f"><label>Backstory <span class="dim">(optional)</span></label><textarea id="cc-b" placeholder="A wandering sellsword, a disgraced noble's heir...">${esc(d.backstory||"")}</textarea></div>
     <div class="f">
       <label>Ability Scores <span class="dim">(4d6 drop lowest)</span></label>
@@ -1143,7 +1176,7 @@ function stepReview(d) {
     <div class="review-grid">
       <div class="review-block">
         <div class="rv-hdr">${esc(d.name)}</div>
-        <div class="rv-sub">${esc(d.race)} ${esc(d.cls)} · ${esc(d.background||"No background")}</div>
+        <div class="rv-sub">${esc(d.race)}${d.subrace&&d.subrace!=="—"?" ("+esc(d.subrace)+")":""} ${esc(d.cls)} · ${esc(d.background||"No background")}</div>
       </div>
       <div class="review-block">
         <div class="rv-lbl">Ability Scores</div>
@@ -1175,7 +1208,12 @@ function bindStep(step, d) {
 
   if(step===1) {
     id("cc-n").oninput = e => S.charDraft.name=e.target.value;
-    id("cc-r").onchange= e => S.charDraft.race=e.target.value;
+    id("cc-r").onchange= e => {
+      S.charDraft.race=e.target.value;
+      S.charDraft.subrace=(SUBRACES[e.target.value]||["—"])[0];
+      rChar();
+    };
+    const srSel=id("cc-sr"); if(srSel) srSel.onchange=e=>S.charDraft.subrace=e.target.value;
     id("cc-c").onchange= e => {
       S.charDraft.cls=e.target.value;
       // Reset equipment/spells when class changes
@@ -1279,7 +1317,7 @@ function bindStep(step, d) {
       const bgSkills = d.background ? BACKGROUNDS[d.background]?.skills||[] : [];
       const allSkills= [...new Set([...bgSkills,...(d.skills||[])])];
       const char = {
-        name:d.name, race:d.race, cls:d.cls, background:d.background||"",
+        name:d.name, race:d.race, subrace:d.subrace||"", cls:d.cls, background:d.background||"",
         backstory:d.backstory||"", stats:d.stats,
         skills:allSkills, extraProfs:d.extraProfs||[],
         equipment:d.equipment||[], gp:d.gp||0,
@@ -1526,7 +1564,7 @@ function rLobby() {
           <div class="rrow ${p.char?"rdy":"wait"}">
             <div>
               <div class="rname">${esc(p.name)}</div>
-              ${p.char?`<div class="rchar">${esc(p.char.name)} · ${esc(p.char.race)} ${esc(p.char.cls)}</div>`:`<div class="rwait">Forging their hero...</div>`}
+              ${p.char?`<div class="rchar">${esc(p.char.name)} · ${esc(p.char.race)}${p.char.subrace&&p.char.subrace!=="—"?" ("+esc(p.char.subrace)+")":""} ${esc(p.char.cls)}</div>`:`<div class="rwait">Forging their hero...</div>`}
             </div>
             <div class="rbadge">${p.char?"✦ Ready":"⏳"}</div>
           </div>`).join("")}
@@ -2850,6 +2888,7 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .asi-btns{display:flex;gap:.2rem;justify-content:center;margin-top:.3rem}
 .asi-btn{background:rgba(201,168,76,.15);border:1px solid var(--gold);border-radius:2px;padding:.15rem .35rem;font-family:'Cinzel',serif;font-size:.58rem;cursor:pointer;color:var(--ink);transition:all .15s}
 .asi-btn:hover{background:linear-gradient(135deg,var(--gold2),var(--gold))}
+.subrace-note{font-size:.68rem;font-style:italic;opacity:.5;margin-top:.25rem}
 </style>
 </head>
 <body>
