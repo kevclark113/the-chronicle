@@ -395,7 +395,7 @@ function getWeaponActions(inventory, equipped, stats, cls) {
         name: key.charAt(0).toUpperCase()+key.slice(1),
         type: "action",
         hit: hitBonus>=0?`+${hitBonus}`:`${hitBonus}`,
-        dmg: `${w.dmg}${dmgBonus>=0?`+${dmgBonus}`:`${dmgBonus}`}`,
+        dmg: w.dmg+(dmgBonus>=0?"+"+dmgBonus:""+dmgBonus),
         dmgType: w.type,
         prop: w.prop,
       });
@@ -412,7 +412,7 @@ function getWeaponActions(inventory, equipped, stats, cls) {
     name: isMonk ? "Martial Arts Strike" : "Unarmed Strike",
     type:"action",
     hit: unarmedMod+profBonus>=0?`+${unarmedMod+profBonus}`:`${unarmedMod+profBonus}`,
-    dmg:`${unarmedDmg}${unarmedMod>=0?`+${unarmedMod}`:`${unarmedMod}`}`,
+    dmg:unarmedDmg+(unarmedMod>=0?"+"+unarmedMod:""+unarmedMod),
     dmgType:"bludgeoning",
     prop: isMonk ? "finesse, Martial Arts" : "",
   });
@@ -611,12 +611,13 @@ RULES:
 - Keep all players engaged through vivid narration even when it's not their turn.
 
 COMBAT & INITIATIVE:
-${camp.combat ? `Currently IN COMBAT. Initiative order: ${(camp.initiativeOrder||[]).map((e,i)=>`${i+1}. ${e.name}(${e.initiative})`).join(", ")}. Current turn: ${(camp.initiativeOrder||[])[camp.combatTurnIdx%Math.max(1,(camp.initiativeOrder||[]).length)]?.name||"unknown"}.
-- On enemy turns: narrate what the enemy does, apply any damage via HP_CHANGES, then state who is next.
-- When ALL enemies are defeated or combat clearly ends, append: COMBAT_END
-- Always append ENEMY_HP:[{"name":"EnemyName","hp":X,"maxHp":Y}] with current enemy HP after each combat action.` : `NOT in combat.
-- When combat begins (enemies attack or initiative would be rolled): append INITIATIVE_START:["EnemyName1","EnemyName2"] with enemy names only. Do NOT ask players to roll initiative — the app rolls it automatically. Do NOT append HOLD_TURN on this response.
-- Also append ENEMY_INITIATIVES:[{"name":"EnemyName","initiative":X,"hp":Y,"maxHp":Y}] with enemy initiative rolls (d20 + DEX modifier) and starting HP for each enemy.
+${(()=>{
+  if(!camp.combat) return "NOT in combat.\n- When combat begins: append INITIATIVE_START:[\"EnemyName1\"] with enemy names only. Do NOT ask players to roll initiative. Do NOT append HOLD_TURN on this response.\n- Also append ENEMY_INITIATIVES:[{\"name\":\"EnemyName\",\"initiative\":X,\"hp\":Y,\"maxHp\":Y}] with enemy initiative rolls and starting HP.";
+  const ord=(camp.initiativeOrder||[]);
+  const ordStr=ord.map(function(e,i){return (i+1)+". "+e.name+"("+e.initiative+")";}).join(", ");
+  const curN=ord[camp.combatTurnIdx%Math.max(1,ord.length)]?.name||"unknown";
+  return "Currently IN COMBAT. Initiative order: "+ordStr+". Current turn: "+curN+".\n- On enemy turns: narrate what the enemy does, apply any damage via HP_CHANGES, then state who is next.\n- When ALL enemies are defeated or combat clearly ends, append: COMBAT_END\n- Always append ENEMY_HP:[{\"name\":\"EnemyName\",\"hp\":X,\"maxHp\":Y}] with current enemy HP after each combat action.";
+})()}
 
 XP AWARDS:
 After your narrative, append these two JSON blocks on their own lines (no markdown, no code fences):
