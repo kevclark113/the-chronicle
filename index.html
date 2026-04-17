@@ -548,7 +548,9 @@ RULES:
 - This is strictly turn-based. One player acts per turn; you respond, then the next player goes.
 - Always end your response by clearly naming whose turn it is next (e.g. "What do you do, ${cur?.name}?").
 - When rolls are needed, name the player and die explicitly (e.g. "Roll a d20 for Stealth, ${cur?.name}.").
-- HOLD TURN: If you are asking the current player to roll dice or provide more information before the turn passes, append HOLD_TURN on its own line. This keeps the turn with that player so they can roll and respond. Only append HOLD_TURN when you genuinely need that player to act again before moving on. Do NOT append it when the turn should pass to the next player.
+- HOLD TURN: This is critical. If your response asks the current player to roll ANY die (d20, d6, etc.), you MUST append HOLD_TURN on its own line at the end. Do not narrate the outcome of the roll before they roll it — stop the narrative, ask for the roll, and append HOLD_TURN. The app will automatically send their roll result back to you so you can then narrate the outcome. Only skip HOLD_TURN when no roll is needed and the turn should pass to the next player.
+  Example correct usage: "Roll a d20 for Stealth, Jenn.\nHOLD_TURN"
+  Example incorrect usage: narrating success/failure before the player has rolled.
 - Let choices have real weight — good ideas succeed, recklessness backfires.
 - Keep all players engaged through vivid narration even when it's not their turn.
 
@@ -682,8 +684,22 @@ async function callDM(system, history) {
   let concCheck = null;
   if(concCheckMatch) { try { concCheck = JSON.parse(concCheckMatch[1]); } catch(e){} }
 
-  // Parse HOLD_TURN signal
-  const holdTurn = /\nHOLD_TURN/.test(raw);
+  // Parse HOLD_TURN signal — either explicit or detected from text
+  const explicitHold = /HOLD_TURN/.test(raw);
+  // Auto-detect roll requests directed at the acting player
+  // We pass the acting player name in via the history — last user message tells us who acted
+  const lastUserMsg = history[history.length-1]?.content||"";
+  const actingPlayer = lastUserMsg.split(":")[0]||"";
+  const rollRequestPattern = new RegExp(
+    "roll\\s+a?\\s*(d\\d+|d20|d12|d10|d8|d6|d4)|make\\s+a\\s+\\w+\\s+(check|save|saving\\s+throw)|roll\\s+for\\s+\\w+",
+    "i"
+  );
+  // Only auto-hold if roll request appears AND acting player is mentioned nearby, or no specific player named
+  const hasRollRequest = rollRequestPattern.test(raw);
+  const playerMentionedWithRoll = actingPlayer && new RegExp(actingPlayer+"[^.!?]*roll|roll[^.!?]*"+actingPlayer,"i").test(raw);
+  const genericRollRequest = hasRollRequest && !raw.match(/roll[^.!?
+]*,\s*\w+/i); // no "Roll X, PlayerName" pattern
+  const holdTurn = explicitHold || playerMentionedWithRoll || genericRollRequest;
 
   // Strip all blocks from text
   const text2 = text
