@@ -395,6 +395,59 @@ function getWeaponActions(inventory, equipped, stats, cls) {
   return actions;
 }
 
+// ── CAMPAIGN THEMES ──────────────────────────────────────────────────────────
+const THEMES = {
+  "Classic Fantasy": {
+    icon: "⚔",
+    desc: "Dungeons, dragons, ancient ruins, high adventure. The timeless D&D experience.",
+    tone: "Classic high fantasy — heroic, wondrous, dangerous. Lean into dungeons, ancient evils, magical artifacts, and the tension between civilization and wilderness. NPCs include wise wizards, corrupt nobles, brave guards, and cunning merchants. Monsters range from goblins and orcs to dragons and liches.",
+    openingHints: "Begin in or near a tavern, a city gate, or on a road. Introduce an immediate hook — a rumor, a job offer, or an unexpected threat.",
+  },
+  "Pirate & Seafaring": {
+    icon: "🏴‍☠️",
+    desc: "Naval combat, port towns, cursed treasure, and the open sea.",
+    tone: "Swashbuckling nautical adventure — salt air, creaking ships, and the freedom of the open ocean. Lean into port towns with shady taverns, rival pirate crews, merchant vessels to plunder or protect, sea monsters, cursed artifacts, and hidden island treasure. NPCs include weathered sailors, corrupt harbor masters, ruthless pirate captains, and desperate merchants. Combat often happens on ships or docks.",
+    openingHints: "Begin at a port, aboard a ship, or in a dockside tavern. The sea is always visible. Introduce a ship, a map, or a rival crew early.",
+  },
+  "Dark Mystery": {
+    icon: "🕵️",
+    desc: "Gothic atmosphere, investigation, conspiracies, and moral ambiguity.",
+    tone: "Dark, gothic mystery — fog-shrouded cities, shadowy cults, unreliable allies, and secrets that cut deep. Lean into investigation, deception, and the horror of uncovering uncomfortable truths. NPCs have hidden agendas. Monsters may not be monsters. Violence is rarely the cleanest solution. Atmosphere is everything — candlelit manors, rain-slicked cobblestones, whispered confessions.",
+    openingHints: "Begin with a body, a missing person, or a letter with no signature. The mystery should feel personal to at least one character.",
+  },
+  "Wilderness Survival": {
+    icon: "🌿",
+    desc: "Harsh exploration, survival against the elements, and the untamed wild.",
+    tone: "Gritty wilderness survival — the land itself is as dangerous as any monster. Lean into weather, starvation, exhaustion, getting lost, and the beauty and brutality of nature. Encounters with wildlife are frequent. Civilization is far away. Every resource matters. NPCs are rare — a hermit, a ranger, a lost traveler. The wilderness has its own ancient magic.",
+    openingHints: "Begin deep in the wilderness — a forest, a mountain pass, a frozen tundra. The party may be lost, stranded, or on a long journey with no road.",
+  },
+  "Political Intrigue": {
+    icon: "👑",
+    desc: "Courts, factions, manipulation, and war between kingdoms.",
+    tone: "High-stakes political drama — alliances shift, loyalties are tested, and the battlefield is the court as much as any dungeon. Lean into factions with competing goals, nobles with hidden agendas, assassinations, diplomatic crises, and the weight of decisions that affect thousands. Combat is often the last resort — words and positioning matter more. NPCs are complex, layered, and rarely purely evil.",
+    openingHints: "Begin at court, at a diplomatic event, or in the aftermath of a political killing. Introduce at least two factions with conflicting interests immediately.",
+  },
+  "Urban Underworld": {
+    icon: "🏚",
+    desc: "City crime, thieves guilds, heists, and street-level adventure.",
+    tone: "Gritty urban adventure — the city is a living, breathing maze of opportunity and danger. Lean into thieves guilds, corrupt city watch, underground fighting rings, smuggling operations, and the hierarchy of criminal organizations. The rich exploit the poor. Survival means knowing the right people. Heists, cons, and street fights dominate. NPCs range from ruthless crime lords to desperate street kids.",
+    openingHints: "Begin in the slums, a criminal safehouse, or mid-job. The party should already have ties to the underworld or owe someone a dangerous favor.",
+  },
+  "Dark Horror": {
+    icon: "🌑",
+    desc: "Cosmic dread, eldritch monsters, psychological tension, and survival.",
+    tone: "Oppressive horror — the world is wrong in ways that can't fully be understood. Lean into cosmic dread, body horror, sanity-threatening revelations, and monsters that cannot simply be killed. Death is a real threat. Hope is scarce. The darkness has weight. NPCs are traumatized, desperate, or already corrupted. Victory often means surviving and containing evil, not destroying it. Tone should feel like a horror film — slow dread punctuated by sudden violence.",
+    openingHints: "Begin in darkness — a village plagued by disappearances, a ruin where something wrong lives, a storm that won't end. Establish that something is deeply, fundamentally wrong.",
+  },
+  "Custom": {
+    icon: "⚗️",
+    desc: "Write your own premise. Full creative control.",
+    tone: "", // filled by user
+    openingHints: "",
+  },
+};
+
+
 // ── STATE ────────────────────────────────────────────────────────────────────
 // Restore session from localStorage so refresh doesn't log you out
 const _saved = (() => { try { return JSON.parse(localStorage.getItem("chronicle_session")||"{}"); } catch(e){ return {}; } })();
@@ -427,11 +480,11 @@ let S = {
 // ── FIRESTORE ────────────────────────────────────────────────────────────────
 const cref = id => doc(db,"campaigns",id);
 
-async function createCampaign(creatorName, otherNames) {
+async function createCampaign(creatorName, otherNames, theme, customPremise) {
   const id = genCode();
   const allNames = [creatorName, ...otherNames.filter(n=>n.trim())];
   const players  = allNames.map(name => ({ name, joined:name===creatorName, char:null, hp:null, maxHp:null }));
-  await setDoc(cref(id), { id, creatorName, players, phase:"char-creation", turnIndex:0, messages:[], aiHistory:[], createdAt:Date.now() });
+  await setDoc(cref(id), { id, creatorName, players, theme:theme||"Classic Fantasy", customPremise:customPremise||"", phase:"char-creation", turnIndex:0, messages:[], aiHistory:[], createdAt:Date.now() });
   return id;
 }
 
@@ -471,19 +524,28 @@ function buildSystem(camp) {
     return `${p.name} plays ${c.name}, ${c.race}${c.subrace&&c.subrace!=="—"?" ("+c.subrace+")":""} ${c.cls} (bg: ${c.background||"none"}) — STR${c.stats.STR} DEX${c.stats.DEX} CON${c.stats.CON} INT${c.stats.INT} WIS${c.stats.WIS} CHA${c.stats.CHA}. HP:${p.hp}/${p.maxHp}.${availSlots?` Spell slots: ${availSlots}.`:""}${spellList?` Spells: ${spellList}.`:""}${inv?` Inventory: ${inv}.`:""}${c.skills?.length?` Proficient: ${c.skills.slice(0,5).join(", ")}.`:""}${c.backstory?` ${c.backstory}`:""}`;
   }).join("\n");
   const cur = camp.players[camp.turnIndex % camp.players.length];
-  return `You are the sole Dungeon Master for a classic fantasy D&D 5e campaign with ${camp.players.length} players. There is no human DM.
+  const theme = camp.theme||"Classic Fantasy";
+  const themeData = THEMES[theme]||THEMES["Classic Fantasy"];
+  const themeTone = theme==="Custom" && camp.customPremise
+    ? camp.customPremise
+    : themeData.tone;
+
+  return `You are the sole Dungeon Master for a ${theme} D&D 5e campaign with ${camp.players.length} players. There is no human DM.
+
+CAMPAIGN THEME: ${theme}
+${themeTone}
+${camp.customPremise && theme!=="Custom" ? `\nCREATOR'S PREMISE: ${camp.customPremise}` : ""}
 
 PARTY:\n${chars}
 
 RULES:
-- Narrate vividly in 2–4 paragraphs. Make the world, NPCs, and atmosphere feel real and alive.
+- Narrate vividly in 2–4 paragraphs. Make the world, NPCs, and atmosphere feel real and alive. Stay true to the campaign theme at all times.
 - SPELL ENFORCEMENT: If a player attempts to cast a spell not in their known spells list, narrate that it fails — they simply don't know that spell. If they have no remaining slots for that spell level, narrate that their magical energy is spent. Never grant spell effects outside a player's actual known spells or available slots.
 - This is strictly turn-based. One player acts per turn; you respond, then the next player goes.
 - Always end your response by clearly naming whose turn it is next (e.g. "What do you do, ${cur?.name}?").
 - When rolls are needed, name the player and die explicitly (e.g. "Roll a d20 for Stealth, ${cur?.name}.").
 - Let choices have real weight — good ideas succeed, recklessness backfires.
 - Keep all players engaged through vivid narration even when it's not their turn.
-- Classic fantasy tone: dungeons, intrigue, wonder, moral weight, memorable NPCs.
 
 COMBAT & INITIATIVE:
 ${camp.combat ? `Currently IN COMBAT. Initiative order: ${(camp.initiativeOrder||[]).map((e,i)=>`${i+1}. ${e.name}(${e.initiative})`).join(", ")}. Current turn: ${(camp.initiativeOrder||[])[camp.combatTurnIdx%Math.max(1,(camp.initiativeOrder||[]).length)]?.name||"unknown"}.
@@ -945,8 +1007,27 @@ function rNew() {
     <div class="fcenter">
       <div class="card wide">
         <h2 class="ch">Create a Campaign</h2>
-        <p class="csub">You'll play as a full party member. Enter your name, then name up to 3 other players.</p>
+        <p class="csub">You'll play as a full party member. Enter your name, choose a theme, then name your other players.</p>
         <div class="f"><label>Your Name</label><input id="cn" placeholder="Your name..."/></div>
+        <div class="f">
+          <label>Campaign Theme</label>
+          <div class="theme-grid" id="theme-grid">
+            ${Object.entries(THEMES).map(([key,t])=>`
+              <div class="theme-card ${key==="Classic Fantasy"?"theme-selected":""}" data-theme="${key}">
+                <div class="theme-icon">${t.icon}</div>
+                <div class="theme-name">${key}</div>
+                <div class="theme-desc">${t.desc}</div>
+              </div>`).join("")}
+          </div>
+        </div>
+        <div class="f" id="custom-premise-field" style="display:none">
+          <label>Your Campaign Premise <span class="dim">(describe the setting, tone, and world)</span></label>
+          <textarea id="custom-premise" rows="3" placeholder="A dark steampunk city where magic is illegal and the underground resistance fights the iron-fisted Arcane Authority..."></textarea>
+        </div>
+        <div class="f">
+          <label>Additional Notes <span class="dim">(optional — any extra context for the DM)</span></label>
+          <textarea id="camp-notes" rows="2" placeholder="e.g. Keep it family friendly, focus on mystery over combat, we're experienced players..."></textarea>
+        </div>
         <div class="f"><label>Other Players <span class="dim">(optional, up to 3)</span></label>
           <div id="pl"><input class="pn" placeholder="Player 2..." style="margin-bottom:.4rem"/>
           <input class="pn" placeholder="Player 3..." style="margin-bottom:.4rem"/></div>
@@ -958,7 +1039,18 @@ function rNew() {
       </div>
     </div>`;
   id("bback").onclick = () => go("landing");
+  let selectedTheme = "Classic Fantasy";
   let pc=2;
+
+  qall(".theme-card").forEach(card => {
+    card.onclick = () => {
+      qall(".theme-card").forEach(c=>c.classList.remove("theme-selected"));
+      card.classList.add("theme-selected");
+      selectedTheme = card.dataset.theme;
+      id("custom-premise-field").style.display = selectedTheme==="Custom" ? "block" : "none";
+    };
+  });
+
   id("addp").onclick = () => {
     if(pc>=4) return; pc++;
     const i=document.createElement("input"); i.className="pn"; i.placeholder=`Player ${pc}...`; i.style.marginBottom=".4rem";
@@ -968,12 +1060,17 @@ function rNew() {
   id("bcreate").onclick = async () => {
     const creator=id("cn").value.trim();
     if(!creator){id("er").textContent="Enter your name.";return;}
+    if(selectedTheme==="Custom" && !id("custom-premise")?.value.trim()){id("er").textContent="Describe your custom campaign premise.";return;}
     const others=[...qall(".pn")].map(i=>i.value.trim()).filter(Boolean);
+    const notes = id("camp-notes")?.value.trim()||"";
+    const customPremise = (id("custom-premise")?.value.trim()||"") + (notes?"
+
+Additional notes: "+notes:"");
     const btn=id("bcreate"); btn.disabled=true; btn.textContent="Creating...";
     try {
-      const cid=await createCampaign(creator,others);
+      const cid=await createCampaign(creator,others,selectedTheme,customPremise);
       S.campaignId=cid; S.myName=creator; S.isCreator=true;
-      S.charDraft={name:"",race:"Human",cls:"Fighter",backstory:"",stats:rollAll()};
+      S.charDraft={name:"",race:"Human",subrace:"Standard",cls:"Fighter",backstory:"",stats:rollAll()};
       attach(cid);
     } catch(e){ id("er").textContent=e.message; btn.disabled=false; btn.textContent="Create & Get Code"; }
   };
@@ -1559,6 +1656,7 @@ function rLobby() {
           <div class="codelabel">Campaign Code</div>
           <div class="codevalue">${camp.id}</div>
           <div class="codehint">Share this code with your players</div>
+          <div class="theme-badge">${THEMES[camp.theme||"Classic Fantasy"]?.icon||"⚔"} ${esc(camp.theme||"Classic Fantasy")}</div>
         </div>
         <div class="roster">${camp.players.map(p=>`
           <div class="rrow ${p.char?"rdy":"wait"}">
@@ -1581,7 +1679,7 @@ function rLobby() {
       const camp=S.campaign, sys=buildSystem(camp), fp=camp.players[0].name;
       if(!serverReady){ id("er").textContent="DM server is still warming up — wait a moment and try again."; btn.disabled=false; btn.textContent="⚔ Begin the Adventure"; return; }
       try {
-        const txt=await callDM(sys,[{role:"user",content:`Begin the campaign. Open with a vivid atmospheric scene that brings all ${camp.players.length} adventurers together. Establish immediate tension or a compelling hook. End by inviting ${fp} to act first.`}]);
+        const txt=await callDM(sys,[{role:"user",content:`Begin the campaign. ${(THEMES[camp.theme||"Classic Fantasy"]?.openingHints||"")} Open with a vivid atmospheric scene that brings all ${camp.players.length} adventurers together in this ${camp.theme||"Classic Fantasy"} setting. Establish immediate tension or a compelling hook. End by inviting ${fp} to act first.`}]);
         const msg={type:"dm",text:txt,ts:Date.now()};
         const aih=[{role:"user",content:"Begin the campaign."},{role:"assistant",content:txt}];
         await patch(camp.id,{phase:"play",messages:[msg],aiHistory:aih,turnIndex:0});
@@ -1608,7 +1706,7 @@ function rPlay() {
     <div class="play-wrap">
       <header class="phead">
         <span class="pbrand">The Chronicle</span>
-        <span class="pcode">Code: <strong>${camp.id}</strong></span>
+        <span class="pcode">Code: <strong>${camp.id}</strong> · ${THEMES[camp.theme||"Classic Fantasy"]?.icon||"⚔"} ${esc(camp.theme||"Classic Fantasy")}</span>
         <button class="btn-leave" id="btn-leave">✕ Leave</button>
       </header>
       <div class="pgrid">
@@ -2889,6 +2987,18 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .asi-btn{background:rgba(201,168,76,.15);border:1px solid var(--gold);border-radius:2px;padding:.15rem .35rem;font-family:'Cinzel',serif;font-size:.58rem;cursor:pointer;color:var(--ink);transition:all .15s}
 .asi-btn:hover{background:linear-gradient(135deg,var(--gold2),var(--gold))}
 .subrace-note{font-size:.68rem;font-style:italic;opacity:.5;margin-top:.25rem}
+
+/* ── CAMPAIGN THEMES ── */
+.theme-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem;margin:.4rem 0}
+@media(max-width:500px){.theme-grid{grid-template-columns:1fr}}
+.theme-card{background:rgba(255,255,255,.18);border:1px solid var(--p2);border-radius:3px;padding:.65rem .7rem;cursor:pointer;transition:all .2s;position:relative}
+.theme-card:hover{border-color:var(--gold);background:rgba(255,255,255,.28)}
+.theme-selected{background:rgba(201,168,76,.15)!important;border-color:var(--gold)!important;box-shadow:0 0 0 2px rgba(201,168,76,.25)}
+.theme-selected::after{content:"✓";position:absolute;top:.3rem;right:.45rem;font-family:'Cinzel',serif;font-size:.6rem;color:var(--gold)}
+.theme-icon{font-size:1.2rem;margin-bottom:.2rem}
+.theme-name{font-family:'Cinzel',serif;font-size:.68rem;font-weight:600;letter-spacing:.08em;color:var(--ink);margin-bottom:.15rem}
+.theme-desc{font-size:.68rem;font-style:italic;color:#5a3520;opacity:.75;line-height:1.35}
+.theme-badge{font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:.1em;color:var(--gold);margin-top:.3rem;opacity:.8}
 </style>
 </head>
 <body>
