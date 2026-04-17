@@ -686,28 +686,25 @@ async function callDM(system, history) {
 
   // Parse HOLD_TURN signal — either explicit or detected from text
   const explicitHold = /HOLD_TURN/.test(raw);
-  // Auto-detect roll requests directed at the acting player
-  // We pass the acting player name in via the history — last user message tells us who acted
-  const lastUserMsg = history[history.length-1]?.content||"";
-  const actingPlayer = lastUserMsg.split(":")[0]||"";
-  const rollRequestPattern = new RegExp(
-    "roll\\s+a?\\s*(d\\d+|d20|d12|d10|d8|d6|d4)|make\\s+a\\s+\\w+\\s+(check|save|saving\\s+throw)|roll\\s+for\\s+\\w+",
-    "i"
-  );
-  // Only auto-hold if roll request appears AND acting player is mentioned nearby, or no specific player named
-  const hasRollRequest = rollRequestPattern.test(raw);
-  const playerMentionedWithRoll = actingPlayer && new RegExp(actingPlayer+"[^.!?]*roll|roll[^.!?]*"+actingPlayer,"i").test(raw);
-  const genericRollRequest = hasRollRequest && !raw.match(/roll[^.!?
-]*,\s*\w+/i); // no "Roll X, PlayerName" pattern
-  const holdTurn = explicitHold || playerMentionedWithRoll || genericRollRequest;
+  // Auto-detect roll requests — look for "roll a dX", "make a X check/save", "roll for X"
+  const rollDetectPattern = /roll\s+a?\s*d\d+|roll\s+for\s+\w+|make\s+a\s+\w+\s+(check|save|saving\s+throw)/i;
+  const holdTurn = explicitHold || rollDetectPattern.test(raw);
 
   // Strip all blocks from text
-  const text2 = text
+  let text2 = text
     .replace(/\nCONDITIONS:\[.*?\]/gs,"")
     .replace(/\nROLL_MOD:\{.*?\}/g,"")
     .replace(/\nCON_CHECK:\{.*?\}/g,"")
     .replace(/\nHOLD_TURN/g,"")
     .trim();
+
+  // If holding for a roll, truncate at the roll request line so Claude's pre-rolled
+  // narrative doesn't show. Keep everything up to and including the roll request sentence.
+  if(holdTurn && !explicitHold) {
+    const rollTruncPattern = /^(.*?(?:roll\s+a?\s*d\d+[^.!\n]*|make\s+a\s+\w+\s+(?:check|save|saving\s+throw)[^.!\n]*|roll\s+for\s+\w+[^.!\n]*)[.!]?)/is;
+    const truncMatch = rollTruncPattern.exec(text2);
+    if(truncMatch) text2 = truncMatch[1].trim();
+  }
 
   return { text:text2, xpAward, xpReason, hpChanges, initiativeStart, enemyInitiatives, combatEnd, enemyHp, conditions, rollMod, concCheck, holdTurn };
 }
