@@ -4,6 +4,10 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>The Chronicle — AI Dungeon Master</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔</text></svg>"/>
+<meta name="description" content="Multiplayer AI Dungeon Master — no human DM needed. Play D&D with friends across any device."/>
+<meta property="og:title" content="The Chronicle — AI Dungeon Master"/>
+<meta property="og:description" content="Multiplayer D&D with Claude as your DM. No human DM needed. Play across any device."/>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700&family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet"/>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -976,6 +980,14 @@ function rLanding() {
           <button class="btn-blood" id="b-join">🗡&thinsp; Join Existing Campaign</button>
           <button class="btn-ghost" id="b-key" style="opacity:.7;font-size:.58rem">🔑 API Key Settings</button>
         </div>
+        ${!getApiKey() ? `<div class="onboard-tip">
+          <div class="onboard-icon">💡</div>
+          <div class="onboard-text">
+            <strong>First time?</strong> The Chronicle uses Claude AI as your Dungeon Master.
+            You'll need a free <a href="https://console.anthropic.com" target="_blank" style="color:var(--gold)">Anthropic API key</a> to play.
+            Add $5 in credits — it lasts many sessions. Hit <em>API Key Settings</em> to get started.
+          </div>
+        </div>` : ""}
         ${(()=>{
           const hist = getCampaignHistory();
           if(!hist.length) return "";
@@ -2999,6 +3011,140 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .theme-name{font-family:'Cinzel',serif;font-size:.68rem;font-weight:600;letter-spacing:.08em;color:var(--ink);margin-bottom:.15rem}
 .theme-desc{font-size:.68rem;font-style:italic;color:#5a3520;opacity:.75;line-height:1.35}
 .theme-badge{font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:.1em;color:var(--gold);margin-top:.3rem;opacity:.8}
+
+/* ── MOBILE RESPONSIVE ── */
+@media(max-width:768px) {
+
+  /* General */
+  .fcenter { padding: 1rem; align-items: flex-start; }
+  .card:not(.narc-card):not(.sc) { padding: 1.2rem 1rem; }
+  .card.wide, .creation-card { max-width: 100%; }
+  .two-col { grid-template-columns: 1fr; gap: .4rem; }
+
+  /* Landing */
+  .land-box { max-width: 100%; }
+  .brand { font-size: clamp(1.6rem,8vw,2.8rem); }
+  .brand-sub { font-size: .6rem; letter-spacing: .15em; }
+  .resume-row { flex-direction: column; align-items: flex-start; gap: .4rem; }
+  .btn-resume { width: 100%; text-align: center; }
+
+  /* Theme grid */
+  .theme-grid { grid-template-columns: 1fr; }
+
+  /* Play layout */
+  .play-wrap { min-height: 100dvh; }
+  .phead { padding: .5rem .7rem; }
+  .pbrand { font-size: .75rem; }
+  .pcode { font-size: .5rem; }
+  .pgrid {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    padding: .5rem;
+    gap: .5rem;
+    height: calc(100dvh - 40px);
+    overflow: hidden;
+  }
+
+  /* Narrative on mobile — takes most of screen */
+  .narc { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .narc-card { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .log {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    padding: .8rem 1rem;
+    font-size: .88rem;
+  }
+  .azone { padding: .6rem .8rem; flex-shrink: 0; }
+  .arow { gap: .4rem; }
+  #ainp { font-size: .9rem; min-height: 40px; }
+  .declare-btns { flex-direction: row; gap: .3rem; }
+  .btn-declare, .btn-bonus { padding: .4rem .6rem; font-size: .55rem; }
+
+  /* Sidebar on mobile — horizontal scrollable strip */
+  .sbar {
+    display: flex;
+    flex-direction: row;
+    gap: .5rem;
+    overflow-x: auto;
+    padding-bottom: .3rem;
+    flex-shrink: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sbar::-webkit-scrollbar { height: 3px; }
+  .sbar::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 2px; }
+  .sc {
+    min-width: 180px;
+    max-width: 220px;
+    flex-shrink: 0;
+    padding: .6rem .7rem;
+    font-size: .78rem;
+  }
+
+  /* HP controls on mobile */
+  .hpctrl { gap: .2rem; }
+  .hpinp { width: 36px; font-size: .65rem; }
+  .hbtn { padding: .14rem 0; font-size: .5rem; }
+
+  /* Dice grid on mobile */
+  .dgrid { grid-template-columns: repeat(4,1fr); gap: .25rem; }
+  .dbtn { padding: .32rem .05rem; font-size: .55rem; }
+
+  /* Sheet panel on mobile */
+  .sheet-tabs { gap: .15rem; }
+  .stab { font-size: .44rem; padding: .18rem .35rem; }
+  .combat-stats { grid-template-columns: repeat(4,1fr); gap: .2rem; }
+  .cs-val { font-size: .82rem; }
+  .action-row-item { padding: .2rem .3rem; }
+  .act-name { font-size: .6rem; }
+  .act-detail { font-size: .58rem; }
+
+  /* Character creation on mobile */
+  .step-bar { gap: .15rem; }
+  .step-pip { width: 18px; height: 18px; font-size: .48rem; }
+  .step-label { display: none; } /* Hide labels on small screens */
+  .skill-grid { grid-template-columns: 1fr; }
+  .spell-grid { grid-template-columns: 1fr; }
+  .stat-grid { grid-template-columns: repeat(3,1fr); }
+  .asi-grid { grid-template-columns: repeat(3,1fr); }
+
+  /* Death save on mobile */
+  .death-save-box { padding: .5rem; }
+  .ds-track { gap: .25rem; }
+  .ds-pip { width: 12px; height: 12px; }
+
+  /* Spell popup on mobile */
+  .spell-popup { padding: .55rem; }
+  .sp-btns { flex-wrap: wrap; gap: .3rem; }
+
+  /* Server banner */
+  .server-banner { font-size: .58rem; padding: .35rem; }
+
+  /* Lobby */
+  .codebox { padding: .6rem; }
+  .codevalue { font-size: 1.7rem; letter-spacing: .2em; }
+  .roster-row { flex-direction: column; align-items: flex-start; gap: .25rem; }
+
+  /* Level up */
+  .levelup-section { padding: .6rem; }
+  .review-grid { gap: .5rem; }
+}
+
+/* Extra small phones */
+@media(max-width:380px) {
+  .brand { font-size: 1.4rem; }
+  .pgrid { padding: .35rem; gap: .35rem; }
+  .log { padding: .6rem .7rem; font-size: .82rem; }
+  .sc { min-width: 160px; }
+  .combat-stats { grid-template-columns: repeat(2,1fr); }
+}
+
+/* ── ONBOARDING ── */
+.onboard-tip{display:flex;gap:.7rem;align-items:flex-start;margin-top:1rem;padding:.8rem;background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:3px;text-align:left}
+.onboard-icon{font-size:1.2rem;flex-shrink:0}
+.onboard-text{font-size:.75rem;line-height:1.55;color:var(--p2);opacity:.85}
+.onboard-text strong{font-family:'Cinzel',serif;font-size:.7rem;letter-spacing:.05em;color:var(--gold)}
+.onboard-text em{font-style:italic;opacity:.8}
 </style>
 </head>
 <body>
