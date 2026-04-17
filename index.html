@@ -1702,7 +1702,8 @@ function rLobby() {
       const camp=S.campaign, sys=buildSystem(camp), fp=camp.players[0].name;
       if(!serverReady){ id("er").textContent="DM server is still warming up — wait a moment and try again."; btn.disabled=false; btn.textContent="⚔ Begin the Adventure"; return; }
       try {
-        const txt=await callDM(sys,[{role:"user",content:`Begin the campaign. ${(THEMES[camp.theme||"Classic Fantasy"]?.openingHints||"")} Open with a vivid atmospheric scene that brings all ${camp.players.length} adventurers together in this ${camp.theme||"Classic Fantasy"} setting. Establish immediate tension or a compelling hook. End by inviting ${fp} to act first.`}]);
+        const result=await callDM(sys,[{role:"user",content:`Begin the campaign. ${(THEMES[camp.theme||"Classic Fantasy"]?.openingHints||"")} Open with a vivid atmospheric scene that brings all ${camp.players.length} adventurers together in this ${camp.theme||"Classic Fantasy"} setting. Establish immediate tension or a compelling hook. End by inviting ${fp} to act first.`}]);
+        const txt=result.text||result;
         const msg={type:"dm",text:txt,ts:Date.now()};
         const aih=[{role:"user",content:"Begin the campaign."},{role:"assistant",content:txt}];
         await patch(camp.id,{phase:"play",messages:[msg],aiHistory:aih,turnIndex:0});
