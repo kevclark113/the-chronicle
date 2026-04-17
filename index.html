@@ -680,15 +680,41 @@ function clearApiKey() {
   localStorage.removeItem("chronicle_api_key");
 }
 
+// Wake lock — prevent mobile screen from sleeping during DM response
+let _wakeLock = null;
+async function acquireWakeLock() {
+  try {
+    if("wakeLock" in navigator) _wakeLock = await navigator.wakeLock.request("screen");
+  } catch(e) {}
+}
+function releaseWakeLock() {
+  try { if(_wakeLock) { _wakeLock.release(); _wakeLock = null; } } catch(e) {}
+}
+
 async function callDM(system, history) {
   const apiKey = getApiKey();
   if(!apiKey) { go("api-key"); throw new Error("No API key set"); }
-  const res  = await fetch(`${PROXY}/api/dm`, {
-    method:"POST", headers:{"Content-Type":"application/json","X-API-Key":apiKey},
-    body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1200, system, messages:history })
-  });
-  const data = await res.json();
-  const raw  = data.content?.[0]?.text || "...";
+
+  await acquireWakeLock();
+
+  // Retry up to 2 times on network failure
+  let lastError;
+  for(let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const controller = new AbortController();
+      // 90 second timeout — generous for slow mobile connections
+      const timeout = setTimeout(() => controller.abort(), 90000);
+      const res = await fetch(`${PROXY}/api/dm`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json","X-API-Key":apiKey},
+        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1200, system, messages:history }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      releaseWakeLock();
+      const data = await res.json();
+      if(data.error) throw new Error(data.error);
+      const raw  = data.content?.[0]?.text || "...";
   // Parse XP award
   const xpMatch = raw.match(/XP_AWARD:(\{.*?\})/);
   let xpAward = 0, xpReason = "";
@@ -766,7 +792,21 @@ async function callDM(system, history) {
     if(truncMatch) text2 = truncMatch[1].trim();
   }
 
-  return { text:text2, xpAward, xpReason, hpChanges, initiativeStart, enemyInitiatives, combatEnd, enemyHp, conditions, rollMod, concCheck, holdTurn };
+      return { text:text2, xpAward, xpReason, hpChanges, initiativeStart, enemyInitiatives, combatEnd, enemyHp, conditions, rollMod, concCheck, holdTurn };
+    } catch(e) {
+      lastError = e;
+      releaseWakeLock();
+      if(e.name === "AbortError") {
+        // Timeout — wait 2s then retry
+        if(attempt < 2) await new Promise(r => setTimeout(r, 2000));
+      } else if(attempt < 2) {
+        // Network error — wait 3s then retry
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+  }
+  releaseWakeLock();
+  throw lastError || new Error("DM connection failed after 3 attempts");
 }
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
@@ -1985,7 +2025,7 @@ function rPlay() {
           <div class="card narc-card">
             <div class="log" id="log">
               ${camp.messages.map(msgHtml).join("")}
-              ${S.submitting?`<div class="thinking">The Dungeon Master weighs the fates...</div>`:""}
+              ${S.submitting?`<div class="thinking">The Dungeon Master weighs the fates...<span class="thinking-sub">Keep this screen open</span></div>`:""}
             </div>
             <div class="azone">
               <div class="tpill ${isMyTurn?(camp.holdTurn?"tpill-roll":"tpill-on"):isEnemyTurn?"tpill-enemy":"tpill-off"}">
@@ -3598,6 +3638,7 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
   .hb-class-grid{grid-template-columns:1fr}
   .hb-table td,.hb-table th{padding:.28rem .4rem;font-size:.72rem}
 }
+.thinking-sub{display:block;font-size:.55rem;letter-spacing:.12em;opacity:.5;margin-top:.2rem;font-family:'Cinzel',serif}
 </style>
 </head>
 <body>
