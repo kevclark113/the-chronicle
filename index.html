@@ -2113,16 +2113,18 @@ function bindSheetEvents(camp) {
 
 
 function msgHtml(m) {
+  if(!m || !m.type) return "";
+  const t = m.text ? String(m.text) : "";
   if(m.type==="dm") {
-    const isErr = m.text && m.text.startsWith("(The DM");
-    return `<div class="mdm"><div class="mlbl">⚔ Dungeon Master</div>${esc(m.text)}${isErr ? `<button class="btn-retry" data-ts="${m.ts||''}">↺ Retry</button>` : ""}</div>`;
+    const isErr = t.startsWith("(The DM");
+    return `<div class="mdm"><div class="mlbl">⚔ Dungeon Master</div>${esc(t)}${isErr ? `<button class="btn-retry" data-ts="${m.ts||''}">↺ Retry</button>` : ""}</div>`;
   }
-  if(m.type==="player") return `<div class="mpl"><div class="mlbl">↳ ${esc(m.who)}</div>${esc(m.text)}</div>`;
-  if(m.type==="roll")   return `<div class="mroll">🎲 ${esc(m.text)}</div>`;
-  if(m.type==="xp")     return `<div class="msg-xp">✦ ${esc(m.text)}</div>`;
-  if(m.type==="hp")     return `<div class="msg-hp ${m.text&&m.text.includes('UNCONSCIOUS')?"msg-hp-dead":""}">❤ ${esc(m.text)}</div>`;
-  if(m.type==="initiative") return `<div class="msg-init">⚔ ${esc(m.text)}</div>`;
-  if(m.type==="condition")  return `<div class="msg-cond">${esc(m.text)}</div>`;
+  if(m.type==="player") return `<div class="mpl"><div class="mlbl">↳ ${esc(m.who)}</div>${esc(t)}</div>`;
+  if(m.type==="roll")   return `<div class="mroll">🎲 ${esc(t)}</div>`;
+  if(m.type==="xp")     return `<div class="msg-xp">✦ ${esc(t)}</div>`;
+  if(m.type==="hp")     return `<div class="msg-hp ${t.includes('UNCONSCIOUS')?"msg-hp-dead":""}">❤ ${esc(t)}</div>`;
+  if(m.type==="initiative") return `<div class="msg-init">⚔ ${esc(t)}</div>`;
+  if(m.type==="condition")  return `<div class="msg-cond">${esc(t)}</div>`;
   return "";
 }
 
