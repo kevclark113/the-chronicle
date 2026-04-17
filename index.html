@@ -1075,9 +1075,7 @@ function rNew() {
     if(selectedTheme==="Custom" && !id("custom-premise")?.value.trim()){id("er").textContent="Describe your custom campaign premise.";return;}
     const others=[...qall(".pn")].map(i=>i.value.trim()).filter(Boolean);
     const notes = id("camp-notes")?.value.trim()||"";
-    const customPremise = (id("custom-premise")?.value.trim()||"") + (notes?"
-
-Additional notes: "+notes:"");
+    const customPremise = (id("custom-premise")?.value.trim()||"") + (notes?" Additional notes: "+notes:"");
     const btn=id("bcreate"); btn.disabled=true; btn.textContent="Creating...";
     try {
       const cid=await createCampaign(creator,others,selectedTheme,customPremise);
