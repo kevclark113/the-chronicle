@@ -802,6 +802,9 @@ async function callDM(system, history) {
 const go = screen => { S.screen=screen; render(); };
 
 function render() {
+  // Clear loading message on first render
+  const lm = document.getElementById("loading-msg");
+  if(lm) lm.remove();
   ({ landing:rLanding, "new-campaign":rNew, "join-campaign":rJoin,
      "char-creation":rChar, lobby:rLobby, play:rPlay, "api-key":rApiKey, "level-up":rLevelUp }[S.screen] || rLanding)();
 }
@@ -3628,5 +3631,26 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 </style>
 </head>
 <body>
-<div id="root"></div></body>
+<div id="root">
+  <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#1a0f0a;color:#c9a84c;font-family:serif;text-align:center;padding:2rem" id="loading-msg">
+    <div>
+      <div style="font-size:2rem;margin-bottom:1rem">⚔</div>
+      <div style="font-size:1rem;letter-spacing:.2em">THE CHRONICLE</div>
+      <div style="font-size:.7rem;margin-top:.5rem;opacity:.6">Loading...</div>
+    </div>
+  </div>
+</div>
+<script>
+  window.onerror = function(msg, src, line) {
+    document.getElementById('root').innerHTML =
+      '<div style="padding:2rem;color:#e05050;font-family:monospace;background:#1a0f0a;min-height:100vh">' +
+      '<h2 style="color:#c9a84c">Error Loading The Chronicle</h2>' +
+      '<p>' + msg + '</p>' +
+      '<p>Line: ' + line + '</p>' +
+      '<p>Source: ' + src + '</p>' +
+      '<p style="margin-top:1rem;color:#aaa">Try a hard refresh: hold Shift and tap the reload button</p>' +
+      '</div>';
+  };
+</script>
+</body>
 </html>
