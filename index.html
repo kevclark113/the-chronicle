@@ -546,7 +546,42 @@ function buildSystem(camp) {
     const availSlots = Object.entries(slots).map(([l,t])=>`Lv${l}:${t-(usedSlots[l]||0)}/${t}`).join(" ");
     const spellList = (sheet.spells||[]).slice(0,8).join(", ");
     const inv = (sheet.inventory||[]).slice(0,6).join(", ");
-    return `${p.name} plays ${c.name}, ${c.race}${c.subrace&&c.subrace!=="—"?" ("+c.subrace+")":""} ${c.cls} (bg: ${c.background||"none"}) — STR${c.stats.STR} DEX${c.stats.DEX} CON${c.stats.CON} INT${c.stats.INT} WIS${c.stats.WIS} CHA${c.stats.CHA}. HP:${p.hp}/${p.maxHp}.${availSlots?` Spell slots: ${availSlots}.`:""}${spellList?` Spells: ${spellList}.`:""}${inv?` Inventory: ${inv}.`:""}${c.skills?.length?` Proficient: ${c.skills.slice(0,5).join(", ")}.`:""}${c.backstory?` ${c.backstory}`:""}`;
+    // Calculate all modifiers explicitly for Claude
+    const s = c.stats;
+    const pb = p.level >= 5 ? 3 : 2; // proficiency bonus
+    const strMod=mod(s.STR), dexMod=mod(s.DEX), conMod=mod(s.CON);
+    const intMod=mod(s.INT), wisMod=mod(s.WIS), chaMod=mod(s.CHA);
+    // Attack modifiers by class
+    const attackStat = ["Fighter","Barbarian","Paladin","Ranger","Monk"].includes(c.cls)
+      ? Math.max(strMod, dexMod) : ["Wizard","Sorcerer"].includes(c.cls) ? intMod
+      : ["Cleric","Druid"].includes(c.cls) ? wisMod
+      : ["Warlock","Bard"].includes(c.cls) ? chaMod : strMod;
+    const attackBonus = attackStat + pb;
+    const spellBonus = ["Wizard","Sorcerer"].includes(c.cls) ? intMod+pb
+      : ["Cleric","Druid"].includes(c.cls) ? wisMod+pb
+      : ["Warlock","Bard","Paladin"].includes(c.cls) ? chaMod+pb
+      : ["Ranger"].includes(c.cls) ? wisMod+pb : null;
+    // Skill modifiers (proficient skills get +pb)
+    const profSkills = c.skills||[];
+    const skillMods = {
+      "Athletics": strMod + (profSkills.includes("Athletics")?pb:0),
+      "Acrobatics": dexMod + (profSkills.includes("Acrobatics")?pb:0),
+      "Stealth": dexMod + (profSkills.includes("Stealth")?pb:0),
+      "Perception": wisMod + (profSkills.includes("Perception")?pb:0),
+      "Insight": wisMod + (profSkills.includes("Insight")?pb:0),
+      "Persuasion": chaMod + (profSkills.includes("Persuasion")?pb:0),
+      "Deception": chaMod + (profSkills.includes("Deception")?pb:0),
+      "Intimidation": chaMod + (profSkills.includes("Intimidation")?pb:0),
+      "Investigation": intMod + (profSkills.includes("Investigation")?pb:0),
+      "Arcana": intMod + (profSkills.includes("Arcana")?pb:0),
+      "History": intMod + (profSkills.includes("History")?pb:0),
+      "Survival": wisMod + (profSkills.includes("Survival")?pb:0),
+      "Medicine": wisMod + (profSkills.includes("Medicine")?pb:0),
+    };
+    const keySkills = Object.entries(skillMods).filter(([k,v])=>v!==0).map(([k,v])=>`${k}:${v>=0?"+"+v:v}`).join(", ");
+    const saveMods = `STR:${strMod>=0?"+"+strMod:strMod} DEX:${dexMod>=0?"+"+dexMod:dexMod} CON:${conMod>=0?"+"+conMod:conMod} INT:${intMod>=0?"+"+intMod:intMod} WIS:${wisMod>=0?"+"+wisMod:wisMod} CHA:${chaMod>=0?"+"+chaMod:chaMod}`;
+
+    return `${p.name} plays ${c.name}, ${c.race}${c.subrace&&c.subrace!=="—"?" ("+c.subrace+")":""} ${c.cls} Lv${p.level||1} (bg: ${c.background||"none"}) — HP:${p.hp}/${p.maxHp} AC:${c.ac||10} Prof:+${pb}. Stats: STR${s.STR}(${strMod>=0?"+"+strMod:strMod}) DEX${s.DEX}(${dexMod>=0?"+"+dexMod:dexMod}) CON${s.CON}(${conMod>=0?"+"+conMod:conMod}) INT${s.INT}(${intMod>=0?"+"+intMod:intMod}) WIS${s.WIS}(${wisMod>=0?"+"+wisMod:wisMod}) CHA${s.CHA}(${chaMod>=0?"+"+chaMod:chaMod}). Attack bonus:${attackBonus>=0?"+"+attackBonus:attackBonus}${spellBonus!==null?` Spell attack:${spellBonus>=0?"+"+spellBonus:spellBonus} Spell save DC:${8+spellBonus}`:""}.${availSlots?` Spell slots: ${availSlots}.`:""}${spellList?` Spells: ${spellList}.`:""} Saving throws: ${saveMods}. Key skills: ${keySkills}.${inv?` Inventory: ${inv}.`:""}${c.backstory?` ${c.backstory}`:""}`;
   }).join("\n");
   const cur = camp.players[camp.turnIndex % camp.players.length];
   const theme = camp.theme||"Classic Fantasy";
@@ -2165,14 +2200,63 @@ function rPlay() {
     const sides=parseInt(b.dataset.d), rollResult=rollD(sides);
     S.diceResult={sides,result:rollResult};
     const camp=S.campaign;
-    const rollMsg={type:"roll",text:`${S.myName} rolls d${sides}: ${rollResult}`,ts:Date.now()};
+    // Build display roll message — will be updated with modifier context below if held
+    let rollDisplayText = `${S.myName} rolls d${sides}: ${rollResult}`;
+    const rollMsg={type:"roll",text:rollDisplayText,ts:Date.now()};
     const msgs=[...camp.messages,rollMsg];
 
     // If DM is holding the turn for this player, trigger a DM response with the roll result
     if(camp.holdTurn && camp.players[camp.turnIndex%camp.players.length]?.name===S.myName) {
+      // Update roll display message with modifier if we can calculate it
+      const me2 = camp.players.find(p=>p.name===S.myName);
       await patch(S.campaignId,{messages:msgs,holdTurn:false});
       S.submitting=true; rPlay();
-      const nh=[...(camp.aiHistory||[]),{role:"user",content:`${S.myName} rolls d${sides}: ${rollResult}`}];
+      // Build an informative roll message including relevant modifiers
+      const me2 = camp.players.find(p=>p.name===S.myName);
+      const c2 = me2?.char;
+      let rollContext = `${S.myName} rolls d${sides}: ${rollResult}`;
+      if(c2 && sides===20) {
+        // Figure out the most likely modifier from the last DM message
+        const lastDM = [...(camp.messages||[])].reverse().find(m=>m.type==="dm");
+        const dmText = (lastDM?.text||"").toLowerCase();
+        const pb2 = (me2?.level||1) >= 5 ? 3 : 2;
+        const stats2 = c2.stats||{};
+        const profSkills2 = c2.skills||[];
+        let modifier = 0, modLabel = "";
+        // Detect what kind of check from DM's last message
+        if(/attack|hit|strike/.test(dmText)) {
+          const atkStat = ["Fighter","Barbarian","Paladin","Ranger","Monk"].includes(c2.cls) ? Math.max(mod(stats2.STR),mod(stats2.DEX)) : ["Wizard","Sorcerer"].includes(c2.cls) ? mod(stats2.INT) : ["Cleric","Druid"].includes(c2.cls) ? mod(stats2.WIS) : ["Warlock","Bard"].includes(c2.cls) ? mod(stats2.CHA) : mod(stats2.STR);
+          modifier = atkStat + pb2; modLabel = "attack";
+        } else if(/str|strength|athletics/.test(dmText)) { modifier = mod(stats2.STR) + (profSkills2.includes("Athletics")?pb2:0); modLabel = "STR"; }
+        else if(/dex|dexterity|acrobatics/.test(dmText)) { modifier = mod(stats2.DEX) + (profSkills2.includes("Acrobatics")?pb2:0); modLabel = "DEX"; }
+        else if(/stealth/.test(dmText)) { modifier = mod(stats2.DEX) + (profSkills2.includes("Stealth")?pb2:0); modLabel = "Stealth"; }
+        else if(/perception/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Perception")?pb2:0); modLabel = "Perception"; }
+        else if(/insight/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Insight")?pb2:0); modLabel = "Insight"; }
+        else if(/persuasion/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Persuasion")?pb2:0); modLabel = "Persuasion"; }
+        else if(/deception/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Deception")?pb2:0); modLabel = "Deception"; }
+        else if(/intimidat/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Intimidation")?pb2:0); modLabel = "Intimidation"; }
+        else if(/investigation/.test(dmText)) { modifier = mod(stats2.INT) + (profSkills2.includes("Investigation")?pb2:0); modLabel = "Investigation"; }
+        else if(/arcana|history|religion|nature/.test(dmText)) { modifier = mod(stats2.INT) + pb2; modLabel = "INT"; }
+        else if(/survival/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Survival")?pb2:0); modLabel = "Survival"; }
+        else if(/medicine/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Medicine")?pb2:0); modLabel = "Medicine"; }
+        else if(/con|constitution|concentration/.test(dmText)) { modifier = mod(stats2.CON); modLabel = "CON save"; }
+        else if(/wis|wisdom/.test(dmText)) { modifier = mod(stats2.WIS); modLabel = "WIS save"; }
+        else if(/int|intelligence/.test(dmText)) { modifier = mod(stats2.INT); modLabel = "INT save"; }
+        else if(/cha|charisma/.test(dmText)) { modifier = mod(stats2.CHA); modLabel = "CHA save"; }
+        else if(/spell|magic/.test(dmText)) {
+          const spMod = ["Wizard","Sorcerer"].includes(c2.cls) ? mod(stats2.INT) : ["Cleric","Druid"].includes(c2.cls) ? mod(stats2.WIS) : ["Warlock","Bard","Paladin"].includes(c2.cls) ? mod(stats2.CHA) : 0;
+          modifier = spMod + pb2; modLabel = "spell attack";
+        }
+        if(modLabel) {
+          const total = rollResult + modifier;
+          const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
+          rollContext = `${S.myName} rolls d20 for ${modLabel}: ${rollResult} ${modStr} = ${total} total`;
+          // Update the displayed roll message with the modifier breakdown
+          const updMsgs = msgs.map((m,i)=>i===msgs.length-1?{...m,text:rollContext}:m);
+          await patch(S.campaignId,{messages:updMsgs});
+        }
+      }
+      const nh=[...(camp.aiHistory||[]),{role:"user",content:rollContext}];
       try {
         const dmResult=await callDM(buildSystem(camp),nh);
         const dm={type:"dm",text:dmResult.text,ts:Date.now()};
