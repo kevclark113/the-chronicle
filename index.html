@@ -655,24 +655,7 @@ setInterval(() => fetch(`${PROXY}/health`).catch(()=>{}), 8 * 60 * 1000);
 
 // serverReady starts true — banner is cosmetic only, never blocks play
 let serverReady = true;
-async function warmupServer() {
-  // Banner is purely cosmetic — hide it after 3s regardless,
-  // or sooner if health check responds
-  const banner = document.getElementById("server-banner");
-  const hideBanner = () => { if(banner) banner.style.display = "none"; };
-  const fallback = setTimeout(hideBanner, 3000);
-  try {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 8000);
-    await fetch(`${PROXY}/health`, { signal: controller.signal });
-    clearTimeout(t);
-    clearTimeout(fallback);
-    if(banner) { banner.classList.add("server-ok"); banner.textContent = "✦ DM Connected"; setTimeout(hideBanner, 1500); }
-  } catch(e) {
-    clearTimeout(fallback);
-    hideBanner();
-  }
-}
+
 
 function getApiKey() {
   return localStorage.getItem("chronicle_api_key")||"";
@@ -2246,62 +2229,63 @@ function rPlay() {
     const sides=parseInt(b.dataset.d), rollResult=rollD(sides);
     S.diceResult={sides,result:rollResult};
     const camp=S.campaign;
-    // Build display roll message — will be updated with modifier context below if held
-    let rollDisplayText = `${S.myName} rolls d${sides}: ${rollResult}`;
-    const rollMsg={type:"roll",text:rollDisplayText,ts:Date.now()};
-    const msgs=[...camp.messages,rollMsg];
 
     // If DM is holding the turn for this player, trigger a DM response with the roll result
     if(camp.holdTurn && camp.players[camp.turnIndex%camp.players.length]?.name===S.myName) {
-      // Update roll display message with modifier if we can calculate it
-      const me2 = camp.players.find(p=>p.name===S.myName);
-      await patch(S.campaignId,{messages:msgs,holdTurn:false});
-      S.submitting=true; rPlay();
-      // Build an informative roll message including relevant modifiers
+      // Calculate modifier FIRST before patching Firebase
       const me2 = camp.players.find(p=>p.name===S.myName);
       const c2 = me2?.char;
       let rollContext = `${S.myName} rolls d${sides}: ${rollResult}`;
-      if(c2 && sides===20) {
-        // Figure out the most likely modifier from the last DM message
+      if(c2) {
         const lastDM = [...(camp.messages||[])].reverse().find(m=>m.type==="dm");
         const dmText = (lastDM?.text||"").toLowerCase();
         const pb2 = (me2?.level||1) >= 5 ? 3 : 2;
         const stats2 = c2.stats||{};
         const profSkills2 = c2.skills||[];
+        const atkStatMod = ["Fighter","Barbarian","Paladin","Ranger","Monk"].includes(c2.cls)
+          ? Math.max(mod(stats2.STR),mod(stats2.DEX))
+          : ["Wizard","Sorcerer"].includes(c2.cls) ? mod(stats2.INT)
+          : ["Cleric","Druid"].includes(c2.cls) ? mod(stats2.WIS)
+          : ["Warlock","Bard"].includes(c2.cls) ? mod(stats2.CHA)
+          : mod(stats2.STR);
         let modifier = 0, modLabel = "";
-        // Detect what kind of check from DM's last message
-        if(/attack|hit|strike/.test(dmText)) {
-          const atkStat = ["Fighter","Barbarian","Paladin","Ranger","Monk"].includes(c2.cls) ? Math.max(mod(stats2.STR),mod(stats2.DEX)) : ["Wizard","Sorcerer"].includes(c2.cls) ? mod(stats2.INT) : ["Cleric","Druid"].includes(c2.cls) ? mod(stats2.WIS) : ["Warlock","Bard"].includes(c2.cls) ? mod(stats2.CHA) : mod(stats2.STR);
-          modifier = atkStat + pb2; modLabel = "attack";
-        } else if(/str|strength|athletics/.test(dmText)) { modifier = mod(stats2.STR) + (profSkills2.includes("Athletics")?pb2:0); modLabel = "STR"; }
-        else if(/dex|dexterity|acrobatics/.test(dmText)) { modifier = mod(stats2.DEX) + (profSkills2.includes("Acrobatics")?pb2:0); modLabel = "DEX"; }
-        else if(/stealth/.test(dmText)) { modifier = mod(stats2.DEX) + (profSkills2.includes("Stealth")?pb2:0); modLabel = "Stealth"; }
-        else if(/perception/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Perception")?pb2:0); modLabel = "Perception"; }
-        else if(/insight/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Insight")?pb2:0); modLabel = "Insight"; }
-        else if(/persuasion/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Persuasion")?pb2:0); modLabel = "Persuasion"; }
-        else if(/deception/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Deception")?pb2:0); modLabel = "Deception"; }
-        else if(/intimidat/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Intimidation")?pb2:0); modLabel = "Intimidation"; }
-        else if(/investigation/.test(dmText)) { modifier = mod(stats2.INT) + (profSkills2.includes("Investigation")?pb2:0); modLabel = "Investigation"; }
-        else if(/arcana|history|religion|nature/.test(dmText)) { modifier = mod(stats2.INT) + pb2; modLabel = "INT"; }
-        else if(/survival/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Survival")?pb2:0); modLabel = "Survival"; }
-        else if(/medicine/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Medicine")?pb2:0); modLabel = "Medicine"; }
-        else if(/con|constitution|concentration/.test(dmText)) { modifier = mod(stats2.CON); modLabel = "CON save"; }
-        else if(/wis|wisdom/.test(dmText)) { modifier = mod(stats2.WIS); modLabel = "WIS save"; }
-        else if(/int|intelligence/.test(dmText)) { modifier = mod(stats2.INT); modLabel = "INT save"; }
-        else if(/cha|charisma/.test(dmText)) { modifier = mod(stats2.CHA); modLabel = "CHA save"; }
-        else if(/spell|magic/.test(dmText)) {
-          const spMod = ["Wizard","Sorcerer"].includes(c2.cls) ? mod(stats2.INT) : ["Cleric","Druid"].includes(c2.cls) ? mod(stats2.WIS) : ["Warlock","Bard","Paladin"].includes(c2.cls) ? mod(stats2.CHA) : 0;
-          modifier = spMod + pb2; modLabel = "spell attack";
+        if(sides === 20) {
+          if(/attack|hit|strike/.test(dmText)) { modifier = atkStatMod + pb2; modLabel = "attack"; }
+          else if(/str|strength|athletics/.test(dmText)) { modifier = mod(stats2.STR) + (profSkills2.includes("Athletics")?pb2:0); modLabel = "STR"; }
+          else if(/dex|dexterity|acrobatics/.test(dmText)) { modifier = mod(stats2.DEX) + (profSkills2.includes("Acrobatics")?pb2:0); modLabel = "DEX"; }
+          else if(/stealth/.test(dmText)) { modifier = mod(stats2.DEX) + (profSkills2.includes("Stealth")?pb2:0); modLabel = "Stealth"; }
+          else if(/perception/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Perception")?pb2:0); modLabel = "Perception"; }
+          else if(/insight/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Insight")?pb2:0); modLabel = "Insight"; }
+          else if(/persuasion/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Persuasion")?pb2:0); modLabel = "Persuasion"; }
+          else if(/deception/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Deception")?pb2:0); modLabel = "Deception"; }
+          else if(/intimidat/.test(dmText)) { modifier = mod(stats2.CHA) + (profSkills2.includes("Intimidation")?pb2:0); modLabel = "Intimidation"; }
+          else if(/investigation/.test(dmText)) { modifier = mod(stats2.INT) + (profSkills2.includes("Investigation")?pb2:0); modLabel = "Investigation"; }
+          else if(/arcana|history|religion|nature/.test(dmText)) { modifier = mod(stats2.INT) + pb2; modLabel = "INT"; }
+          else if(/survival/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Survival")?pb2:0); modLabel = "Survival"; }
+          else if(/medicine/.test(dmText)) { modifier = mod(stats2.WIS) + (profSkills2.includes("Medicine")?pb2:0); modLabel = "Medicine"; }
+          else if(/con\b|constitution|concentration/.test(dmText)) { modifier = mod(stats2.CON); modLabel = "CON save"; }
+          else if(/wis\b|wisdom/.test(dmText)) { modifier = mod(stats2.WIS); modLabel = "WIS save"; }
+          else if(/int\b|intelligence/.test(dmText)) { modifier = mod(stats2.INT); modLabel = "INT save"; }
+          else if(/cha\b|charisma/.test(dmText)) { modifier = mod(stats2.CHA); modLabel = "CHA save"; }
+          else if(/spell|magic/.test(dmText)) {
+            const spMod = ["Wizard","Sorcerer"].includes(c2.cls) ? mod(stats2.INT) : ["Cleric","Druid"].includes(c2.cls) ? mod(stats2.WIS) : ["Warlock","Bard","Paladin"].includes(c2.cls) ? mod(stats2.CHA) : mod(stats2.WIS);
+            modifier = spMod + pb2; modLabel = "spell attack";
+          }
+        } else if([4,6,8,10,12].includes(sides)) {
+          if(/damage|wound|strike|smite|sneak/.test(dmText)) { modifier = atkStatMod; modLabel = "damage"; }
+          else if(/heal|rest|hit die|hit dice|recovery/.test(dmText)) { modifier = mod(stats2.CON); modLabel = "healing"; }
         }
         if(modLabel) {
           const total = rollResult + modifier;
           const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
-          rollContext = `${S.myName} rolls d20 for ${modLabel}: ${rollResult} ${modStr} = ${total} total`;
-          // Update the displayed roll message with the modifier breakdown
-          const updMsgs = msgs.map((m,i)=>i===msgs.length-1?{...m,text:rollContext}:m);
-          await patch(S.campaignId,{messages:updMsgs});
+          rollContext = `${S.myName} rolls d${sides} for ${modLabel}: ${rollResult} ${modStr} = ${total} total`;
         }
       }
+      // Now patch Firebase with the correct (modifier-included) roll text
+      const rollMsg = { type:"roll", text:rollContext, ts:Date.now() };
+      const msgs = [...camp.messages, rollMsg];
+      await patch(S.campaignId, { messages:msgs, holdTurn:false });
+      S.submitting=true; rPlay();
       const nh=[...(camp.aiHistory||[]),{role:"user",content:rollContext}];
       try {
         const dmResult=await callDM(buildSystem(camp),nh);
@@ -2980,7 +2964,6 @@ const id   = i => document.getElementById(i);
 const q    = i => document.getElementById(i);
 const qall = s => document.querySelectorAll(s);
 
-warmupServer();
 tryAutoRejoin();
 </script>
 <style>
@@ -3399,10 +3382,7 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .adv-on{background:rgba(58,120,64,.12);border-color:var(--green);color:var(--green)}
 .dis-on{background:rgba(139,26,26,.12);border-color:var(--blood);color:var(--blood)}
 
-/* ── SERVER BANNER ── */
-.server-banner{position:fixed;top:0;left:0;right:0;z-index:999;background:#1a0f0a;color:var(--p2);font-family:'Cinzel',serif;font-size:.65rem;letter-spacing:.2em;text-transform:uppercase;text-align:center;padding:.45rem;border-bottom:1px solid rgba(201,168,76,.2);transition:all .4s;opacity:.9}
-.server-ok{background:#0a1a0a;color:#6ab87a;border-color:rgba(106,184,122,.3)}
-.server-err{background:#1a0808;color:#e05050;border-color:rgba(224,80,80,.3)}
+
 
 /* ── API KEY SCREEN ── */
 .api-key-info{background:rgba(255,255,255,.18);border:1px solid var(--p2);border-radius:2px;padding:.8rem;margin-bottom:1rem}
@@ -3648,6 +3628,5 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 </style>
 </head>
 <body>
-<div id="server-banner" class="server-banner">⏳ Connecting to Dungeon Master...</div>
 <div id="root"></div></body>
 </html>
