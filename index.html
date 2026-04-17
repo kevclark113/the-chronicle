@@ -1930,7 +1930,8 @@ function rPlay() {
       await patch(S.campaignId, { messages: cleaned, aiHistory: cleanedHist });
       S.submitting = true; rPlay();
       try {
-        const txt = await callDM(buildSystem(camp), cleanedHist);
+        const result = await callDM(buildSystem(camp), cleanedHist);
+        const txt = result.text||result;
         const dm = { type:"dm", text:txt, ts:Date.now() };
         await patch(S.campaignId, { messages:[...cleaned, dm], aiHistory:[...cleanedHist, {role:"assistant",content:txt}], turnIndex:(camp.turnIndex+1)%camp.players.length });
       } catch(e) {
