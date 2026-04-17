@@ -1680,9 +1680,22 @@ function rLobby() {
         ${S.isCreator
           ?`<button class="btn-gold full" id="bstart" ${allReady?"":"disabled"}>${allReady?"⚔ Begin the Adventure":"Waiting for all characters to be ready..."}</button>`
           :`<div class="wait-msg">Waiting for the campaign creator to begin the adventure...</div>`}
+        <button class="btn-ghost" id="babandon" style="margin-top:.5rem;opacity:.5;font-size:.58rem">✕ Abandon Campaign</button>
         <div class="err" id="er"></div>
       </div>
     </div>`;
+  id("babandon").onclick = () => {
+    const confirmed = confirm("Abandon this campaign? This will remove it from your recent campaigns. Other players will still see it if they rejoin directly.");
+    if(!confirmed) return;
+    clearSession();
+    // Remove from history
+    const hist = getCampaignHistory().filter(c=>c.id!==S.campaignId);
+    localStorage.setItem("chronicle_history", JSON.stringify(hist));
+    S.campaignId=null; S.myName=null; S.campaign=null;
+    if(S.unsub){S.unsub();S.unsub=null;}
+    go("landing");
+  };
+
   if(S.isCreator && allReady) {
     id("bstart").onclick=async()=>{
       const btn=id("bstart"); btn.disabled=true; btn.textContent="Summoning the tale...";
@@ -1718,6 +1731,7 @@ function rPlay() {
         <span class="pbrand">The Chronicle</span>
         <span class="pcode">Code: <strong>${camp.id}</strong> · ${THEMES[camp.theme||"Classic Fantasy"]?.icon||"⚔"} ${esc(camp.theme||"Classic Fantasy")}</span>
         <button class="btn-leave" id="btn-leave">✕ Leave</button>
+        <button class="btn-leave" id="btn-abandon" style="opacity:.45;margin-left:.3rem">🗑 Abandon</button>
       </header>
       <div class="pgrid">
         <section class="narc">
@@ -1849,6 +1863,16 @@ function rPlay() {
 
   const log=id("log"); if(log) log.scrollTop=log.scrollHeight;
   const bl=id("btn-leave"); if(bl) bl.onclick=()=>{ clearSession(); S.campaignId=null; S.myName=null; S.campaign=null; if(S.unsub){S.unsub();S.unsub=null;} go("landing"); };
+  const ba=id("btn-abandon"); if(ba) ba.onclick=()=>{
+    const confirmed = confirm("Abandon this campaign? It will be removed from your recent campaigns.");
+    if(!confirmed) return;
+    clearSession();
+    const hist = getCampaignHistory().filter(c=>c.id!==S.campaignId);
+    localStorage.setItem("chronicle_history", JSON.stringify(hist));
+    S.campaignId=null; S.myName=null; S.campaign=null;
+    if(S.unsub){S.unsub();S.unsub=null;}
+    go("landing");
+  };
 
   // Death save button
   const dsBtn=id("btn-death-save");
