@@ -653,38 +653,24 @@ const PROXY = "https://dnd-proxy.onrender.com";
 // Keep Render free tier warm — ping every 8 minutes
 setInterval(() => fetch(`${PROXY}/health`).catch(()=>{}), 8 * 60 * 1000);
 
-// Warmup on load — shows status indicator until server responds
-let serverReady = false;
+// serverReady starts true — banner is cosmetic only, never blocks play
+let serverReady = true;
 async function warmupServer() {
+  // Banner is purely cosmetic — hide it after 3s regardless,
+  // or sooner if health check responds
   const banner = document.getElementById("server-banner");
+  const hideBanner = () => { if(banner) banner.style.display = "none"; };
+  const fallback = setTimeout(hideBanner, 3000);
   try {
-    // Race the health check against a 60s timeout
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const t = setTimeout(() => controller.abort(), 8000);
     await fetch(`${PROXY}/health`, { signal: controller.signal });
-    clearTimeout(timeout);
-    serverReady = true;
-    if(banner) {
-      banner.classList.add("server-ok");
-      banner.textContent = "✦ DM Connected";
-      setTimeout(() => banner.style.display = "none", 2000);
-    }
+    clearTimeout(t);
+    clearTimeout(fallback);
+    if(banner) { banner.classList.add("server-ok"); banner.textContent = "✦ DM Connected"; setTimeout(hideBanner, 1500); }
   } catch(e) {
-    // Timed out or failed — mark ready anyway so play isn't blocked forever
-    // The actual DM call will handle errors if the server is truly down
-    serverReady = true;
-    if(banner) {
-      if(e.name === "AbortError") {
-        // Took too long but might still work — hide banner and let them try
-        banner.classList.add("server-ok");
-        banner.textContent = "✦ DM Ready (slow connection)";
-        setTimeout(() => banner.style.display = "none", 3000);
-      } else {
-        banner.classList.add("server-err");
-        banner.textContent = "⚠ Server may be slow — try starting anyway";
-        setTimeout(() => banner.style.display = "none", 5000);
-      }
-    }
+    clearTimeout(fallback);
+    hideBanner();
   }
 }
 
@@ -2001,7 +1987,7 @@ function rLobby() {
     id("bstart").onclick=async()=>{
       const btn=id("bstart"); btn.disabled=true; btn.textContent="Summoning the tale...";
       const camp=S.campaign, sys=buildSystem(camp), fp=camp.players[0].name;
-      if(!serverReady){ id("er").textContent="DM server is still warming up — wait a moment and try again."; btn.disabled=false; btn.textContent="⚔ Begin the Adventure"; return; }
+
       try {
         const result=await callDM(sys,[{role:"user",content:`Begin the campaign. ${(THEMES[camp.theme||"Classic Fantasy"]?.openingHints||"")} Open with a vivid atmospheric scene that brings all ${camp.players.length} adventurers together in this ${camp.theme||"Classic Fantasy"} setting. Establish immediate tension or a compelling hook. End by inviting ${fp} to act first.`}]);
         const txt=result.text||result;
