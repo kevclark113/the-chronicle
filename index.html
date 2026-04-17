@@ -548,6 +548,7 @@ RULES:
 - This is strictly turn-based. One player acts per turn; you respond, then the next player goes.
 - Always end your response by clearly naming whose turn it is next (e.g. "What do you do, ${cur?.name}?").
 - When rolls are needed, name the player and die explicitly (e.g. "Roll a d20 for Stealth, ${cur?.name}.").
+- HOLD TURN: If you are asking the current player to roll dice or provide more information before the turn passes, append HOLD_TURN on its own line. This keeps the turn with that player so they can roll and respond. Only append HOLD_TURN when you genuinely need that player to act again before moving on. Do NOT append it when the turn should pass to the next player.
 - Let choices have real weight — good ideas succeed, recklessness backfires.
 - Keep all players engaged through vivid narration even when it's not their turn.
 
@@ -681,14 +682,18 @@ async function callDM(system, history) {
   let concCheck = null;
   if(concCheckMatch) { try { concCheck = JSON.parse(concCheckMatch[1]); } catch(e){} }
 
+  // Parse HOLD_TURN signal
+  const holdTurn = /\nHOLD_TURN/.test(raw);
+
   // Strip all blocks from text
   const text2 = text
     .replace(/\nCONDITIONS:\[.*?\]/gs,"")
     .replace(/\nROLL_MOD:\{.*?\}/g,"")
     .replace(/\nCON_CHECK:\{.*?\}/g,"")
+    .replace(/\nHOLD_TURN/g,"")
     .trim();
 
-  return { text:text2, xpAward, xpReason, hpChanges, initiativeStart, enemyInitiatives, combatEnd, enemyHp, conditions, rollMod, concCheck };
+  return { text:text2, xpAward, xpReason, hpChanges, initiativeStart, enemyInitiatives, combatEnd, enemyHp, conditions, rollMod, concCheck, holdTurn };
 }
 
 // ── RENDER ───────────────────────────────────────────────────────────────────
@@ -1723,7 +1728,11 @@ function rPlay() {
   const cur = inCombat
     ? camp.players.find(p=>p.name===combatSlot?.name) || camp.players[camp.turnIndex%camp.players.length]
     : camp.players[camp.turnIndex%camp.players.length];
-  const isMyTurn = isEnemyTurn ? false : (inCombat ? combatSlot?.name===S.myName : cur?.name===S.myName);
+  // If DM is holding the turn, the player who just acted keeps control
+  const heldPlayer = camp.holdTurn ? camp.players[camp.turnIndex%camp.players.length] : null;
+  const isMyTurn = isEnemyTurn ? false
+    : camp.holdTurn ? heldPlayer?.name===S.myName
+    : (inCombat ? combatSlot?.name===S.myName : cur?.name===S.myName);
   const me=camp.players.find(p=>p.name===S.myName);
 
   q("root").innerHTML = `
@@ -1742,8 +1751,16 @@ function rPlay() {
               ${S.submitting?`<div class="thinking">The Dungeon Master weighs the fates...</div>`:""}
             </div>
             <div class="azone">
-              <div class="tpill ${isMyTurn?"tpill-on":isEnemyTurn?"tpill-enemy":"tpill-off"}">
-                ${isMyTurn?`⚔ Your turn, ${esc(S.myName)}`:isEnemyTurn?`👹 ${esc(combatSlot?.name)} acts...`:`⏳ Waiting on ${esc(inCombat?combatSlot?.name:cur?.name)}...`}
+              <div class="tpill ${isMyTurn?(camp.holdTurn?"tpill-roll":"tpill-on"):isEnemyTurn?"tpill-enemy":"tpill-off"}">
+                ${isMyTurn
+                  ? camp.holdTurn
+                    ? `🎲 Roll requested — ${esc(S.myName)}`
+                    : `⚔ Your turn, ${esc(S.myName)}`
+                  : isEnemyTurn
+                    ? `👹 ${esc(combatSlot?.name)} acts...`
+                    : camp.holdTurn
+                      ? `⏳ ${esc(heldPlayer?.name||cur?.name)} is rolling...`
+                      : `⏳ Waiting on ${esc(inCombat?combatSlot?.name:cur?.name)}...`}
               </div>
               ${(()=>{
                 const meP = camp.players.find(p=>p.name===S.myName);
@@ -1942,10 +1959,35 @@ function rPlay() {
   });
 
   qall(".dbtn").forEach(b=>b.onclick=async()=>{
-    const sides=parseInt(b.dataset.d), result=rollD(sides);
-    S.diceResult={sides,result};
-    const msgs=[...S.campaign.messages,{type:"roll",text:`${S.myName} rolls d${sides}: ${result}`,ts:Date.now()}];
-    await patch(S.campaignId,{messages:msgs});
+    const sides=parseInt(b.dataset.d), rollResult=rollD(sides);
+    S.diceResult={sides,result:rollResult};
+    const camp=S.campaign;
+    const rollMsg={type:"roll",text:`${S.myName} rolls d${sides}: ${rollResult}`,ts:Date.now()};
+    const msgs=[...camp.messages,rollMsg];
+
+    // If DM is holding the turn for this player, trigger a DM response with the roll result
+    if(camp.holdTurn && camp.players[camp.turnIndex%camp.players.length]?.name===S.myName) {
+      await patch(S.campaignId,{messages:msgs,holdTurn:false});
+      S.submitting=true; rPlay();
+      const nh=[...(camp.aiHistory||[]),{role:"user",content:`${S.myName} rolls d${sides}: ${rollResult}`}];
+      try {
+        const dmResult=await callDM(buildSystem(camp),nh);
+        const dm={type:"dm",text:dmResult.text,ts:Date.now()};
+        const ni=(camp.turnIndex+1)%camp.players.length;
+        const holdMsg = dmResult.holdTurn ? [{type:"hold",text:`⏳ Waiting for ${S.myName} to roll...`,ts:Date.now()+1}] : [];
+        await patch(S.campaignId,{
+          messages:[...msgs,dm,...holdMsg],
+          aiHistory:[...nh,{role:"assistant",content:dmResult.text}],
+          turnIndex:dmResult.holdTurn?camp.turnIndex:ni,
+          holdTurn:dmResult.holdTurn||false
+        });
+      } catch(e) {
+        await patch(S.campaignId,{messages:[...msgs,{type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
+      }
+      S.submitting=false;
+    } else {
+      await patch(S.campaignId,{messages:msgs});
+    }
   });
 
   qall(".hbtn").forEach(b=>{
@@ -2127,6 +2169,7 @@ function msgHtml(m) {
   if(m.type==="hp")     return `<div class="msg-hp ${t.includes('UNCONSCIOUS')?"msg-hp-dead":""}">❤ ${esc(t)}</div>`;
   if(m.type==="initiative") return `<div class="msg-init">⚔ ${esc(t)}</div>`;
   if(m.type==="condition")  return `<div class="msg-cond">${esc(t)}</div>`;
+  if(m.type==="hold")       return `<div class="msg-hold">${esc(t)}</div>`;
   return "";
 }
 
@@ -2560,10 +2603,22 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
       return p;
     });
 
+    // If DM is holding the turn (asking for a roll), don't advance
+    const effectiveNi = result.holdTurn ? camp.turnIndex : ni;
+    // For combat, also hold if holdTurn
+    if(result.holdTurn && camp.combat) {
+      combatUpdate = { ...combatUpdate, combatTurnIdx: camp.combatTurnIdx };
+    }
+    // If turn is being held, add a visual indicator
+    const holdMsg = result.holdTurn
+      ? [{ type:"hold", text:`⏳ Waiting for ${S.myName} to roll...`, ts:Date.now()+999 }]
+      : [];
+
     await patch(S.campaignId,{
-      messages:[...nm,dm,...extraMsgs,...initMsgs,...condMsgs],
+      messages:[...nm,dm,...extraMsgs,...initMsgs,...condMsgs,...holdMsg],
       aiHistory:[...nh,{role:"assistant",content:result.text}],
-      turnIndex:ni,
+      turnIndex:effectiveNi,
+      holdTurn:result.holdTurn||false,
       players:updatedPlayers,
       ...combatUpdate
     });
@@ -3064,68 +3119,84 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
   .phead { padding: .5rem .7rem; }
   .pbrand { font-size: .75rem; }
   .pcode { font-size: .5rem; }
+  /* Play layout on mobile — scrollable full page */
   .pgrid {
     grid-template-columns: 1fr;
-    grid-template-rows: 1fr auto;
+    grid-template-rows: auto auto;
     padding: .5rem;
-    gap: .5rem;
-    height: calc(100dvh - 40px);
-    overflow: hidden;
+    gap: .6rem;
+    height: auto;
+    overflow: visible;
   }
 
-  /* Narrative on mobile — takes most of screen */
-  .narc { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .narc-card { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  /* Narrative on mobile */
+  .narc { display: flex; flex-direction: column; }
+  .narc-card { display: flex; flex-direction: column; }
   .log {
-    flex: 1;
-    min-height: 0;
-    max-height: none;
+    max-height: 45vh;
+    min-height: 200px;
     padding: .8rem 1rem;
     font-size: .88rem;
   }
-  .azone { padding: .6rem .8rem; flex-shrink: 0; }
+  .azone { padding: .6rem .8rem; }
   .arow { gap: .4rem; }
   #ainp { font-size: .9rem; min-height: 40px; }
   .declare-btns { flex-direction: row; gap: .3rem; }
   .btn-declare, .btn-bonus { padding: .4rem .6rem; font-size: .55rem; }
 
-  /* Sidebar on mobile — horizontal scrollable strip */
+  /* Sidebar on mobile — vertical stack, full width */
   .sbar {
     display: flex;
-    flex-direction: row;
-    gap: .5rem;
-    overflow-x: auto;
-    padding-bottom: .3rem;
-    flex-shrink: 0;
-    -webkit-overflow-scrolling: touch;
+    flex-direction: column;
+    gap: .6rem;
+    overflow-x: visible;
+    padding-bottom: .5rem;
   }
-  .sbar::-webkit-scrollbar { height: 3px; }
-  .sbar::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 2px; }
   .sc {
-    min-width: 180px;
-    max-width: 220px;
-    flex-shrink: 0;
-    padding: .6rem .7rem;
-    font-size: .78rem;
+    min-width: unset;
+    max-width: 100%;
+    width: 100%;
+    padding: .75rem .85rem;
+    font-size: .82rem;
   }
 
   /* HP controls on mobile */
-  .hpctrl { gap: .2rem; }
-  .hpinp { width: 36px; font-size: .65rem; }
-  .hbtn { padding: .14rem 0; font-size: .5rem; }
+  .hpctrl { gap: .3rem; }
+  .hpinp { width: 42px; font-size: .7rem; }
+  .hbtn { padding: .18rem 0; font-size: .55rem; }
 
-  /* Dice grid on mobile */
-  .dgrid { grid-template-columns: repeat(4,1fr); gap: .25rem; }
-  .dbtn { padding: .32rem .05rem; font-size: .55rem; }
+  /* Dice grid on mobile — bigger targets */
+  .dgrid { grid-template-columns: repeat(4,1fr); gap: .3rem; }
+  .dbtn { padding: .45rem .1rem; font-size: .62rem; }
 
-  /* Sheet panel on mobile */
-  .sheet-tabs { gap: .15rem; }
-  .stab { font-size: .44rem; padding: .18rem .35rem; }
-  .combat-stats { grid-template-columns: repeat(4,1fr); gap: .2rem; }
-  .cs-val { font-size: .82rem; }
-  .action-row-item { padding: .2rem .3rem; }
-  .act-name { font-size: .6rem; }
-  .act-detail { font-size: .58rem; }
+  /* Sheet panel on mobile — full width, readable */
+  .sheet-tabs { gap: .2rem; flex-wrap: wrap; }
+  .stab { font-size: .55rem; padding: .22rem .45rem; }
+  .sheet-body { font-size: .88rem; }
+  .combat-stats { grid-template-columns: repeat(4,1fr); gap: .3rem; }
+  .cs-box { padding: .4rem .2rem; }
+  .cs-lbl { font-size: .5rem; }
+  .cs-val { font-size: 1rem; }
+  .action-row-item { padding: .3rem .4rem; margin-bottom: .22rem; }
+  .act-name { font-size: .72rem; }
+  .act-detail { font-size: .65rem; }
+  .slot-row { gap: .4rem; }
+  .slot-pip { width: 14px; height: 14px; }
+  .sheet-list { max-height: 200px; }
+  .sheet-notes { min-height: 100px; }
+  .prof-list { max-height: 160px; }
+  .mstats { grid-template-columns: repeat(3,1fr); gap: .3rem; }
+  .ms { padding: .3rem .15rem; }
+  .msv { font-size: 1.05rem; }
+
+  /* Mini stats in sidebar */
+  .mini-stats { grid-template-columns: repeat(3,1fr); }
+
+  /* XP bar */
+  .xp-row { flex-wrap: wrap; gap: .2rem; }
+
+  /* Death save on mobile */
+  .ds-track { flex-wrap: wrap; gap: .3rem; }
 
   /* Character creation on mobile */
   .step-bar { gap: .15rem; }
@@ -3173,6 +3244,9 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .onboard-text{font-size:.75rem;line-height:1.55;color:var(--p2);opacity:.85}
 .onboard-text strong{font-family:'Cinzel',serif;font-size:.7rem;letter-spacing:.05em;color:var(--gold)}
 .onboard-text em{font-style:italic;opacity:.8}
+
+.tpill-roll{background:rgba(201,168,76,.2);border-color:var(--gold);color:var(--gold);animation:pulse 1.2s infinite}
+.msg-hold{font-family:'Cinzel',serif;font-size:.65rem;text-align:center;color:var(--gold);letter-spacing:.1em;opacity:.7;padding:.2rem 0;font-style:italic}
 </style>
 </head>
 <body>
