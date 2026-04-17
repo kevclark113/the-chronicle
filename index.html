@@ -743,7 +743,7 @@ async function callDM(system, history) {
   if(concCheckMatch) { try { concCheck = JSON.parse(concCheckMatch[1]); } catch(e){} }
 
   // Parse HOLD_TURN signal — either explicit or detected from text
-  const explicitHold = /HOLD_TURN/.test(raw);
+  const explicitHold = /\*{0,2}HOLD[_\s]TURN\*{0,2}/.test(raw);
   // Auto-detect roll requests — look for "roll a dX", "make a X check/save", "roll for X"
   const rollDetectPattern = /roll\s+a?\s*d\d+|roll\s+for\s+\w+|make\s+a\s+\w+\s+(check|save|saving\s+throw)/i;
   // Don't hold for initiative rolls — those are auto-handled by the app
@@ -755,7 +755,7 @@ async function callDM(system, history) {
     .replace(/\nCONDITIONS:\[.*?\]/gs,"")
     .replace(/\nROLL_MOD:\{.*?\}/g,"")
     .replace(/\nCON_CHECK:\{.*?\}/g,"")
-    .replace(/\nHOLD_TURN/g,"")
+    .replace(/\n?\*{0,2}HOLD[_\s]TURN\*{0,2}/g,"")
     .trim();
 
   // If holding for a roll, truncate at the roll request line so Claude's pre-rolled
