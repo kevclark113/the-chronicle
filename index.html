@@ -657,14 +657,34 @@ setInterval(() => fetch(`${PROXY}/health`).catch(()=>{}), 8 * 60 * 1000);
 let serverReady = false;
 async function warmupServer() {
   const banner = document.getElementById("server-banner");
-  const start = Date.now();
   try {
-    await fetch(`${PROXY}/health`);
+    // Race the health check against a 60s timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    await fetch(`${PROXY}/health`, { signal: controller.signal });
+    clearTimeout(timeout);
     serverReady = true;
-    if(banner) { banner.classList.add("server-ok"); banner.textContent = "✦ DM Connected"; setTimeout(()=>banner.style.display="none", 2000); }
+    if(banner) {
+      banner.classList.add("server-ok");
+      banner.textContent = "✦ DM Connected";
+      setTimeout(() => banner.style.display = "none", 2000);
+    }
   } catch(e) {
-    serverReady = false;
-    if(banner) { banner.classList.add("server-err"); banner.textContent = "⚠ DM Unreachable — check connection"; }
+    // Timed out or failed — mark ready anyway so play isn't blocked forever
+    // The actual DM call will handle errors if the server is truly down
+    serverReady = true;
+    if(banner) {
+      if(e.name === "AbortError") {
+        // Took too long but might still work — hide banner and let them try
+        banner.classList.add("server-ok");
+        banner.textContent = "✦ DM Ready (slow connection)";
+        setTimeout(() => banner.style.display = "none", 3000);
+      } else {
+        banner.classList.add("server-err");
+        banner.textContent = "⚠ Server may be slow — try starting anyway";
+        setTimeout(() => banner.style.display = "none", 5000);
+      }
+    }
   }
 }
 
