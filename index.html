@@ -2417,7 +2417,9 @@ function rPlay() {
         await patch(S.campaignId, { messages:[...cleaned, dm], aiHistory:[...cleanedHist, {role:"assistant",content:txt}], turnIndex:(camp.turnIndex+1)%camp.players.length });
       } catch(e) {
         const errText = e?.message?.includes("No API key")
-          ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+          ? S.isCreator
+            ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+            : "(The DM cannot respond because the campaign creator hasn't configured an API key yet. Ask the creator to set it in Settings.)"
           : `(The DM's voice fades... connection lost. Try again.) ${e?.message||""}`;
         await patch(S.campaignId, { messages:[...cleaned, {type:"dm",text:errText,ts:Date.now()}] });
       }
@@ -2527,7 +2529,9 @@ function rPlay() {
         });
       } catch(e) {
         const errText = e?.message?.includes("No API key")
-          ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+          ? S.isCreator
+            ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+            : "(The DM cannot respond because the campaign creator hasn't configured an API key yet. Ask the creator to set it in Settings.)"
           : `(The DM's voice fades... connection lost. Try again.) ${e?.message||""}`;
         await patch(S.campaignId,{messages:[...msgs,{type:"dm",text:errText,ts:Date.now()}]});
       }
@@ -3154,7 +3158,9 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
     });
   } catch(e) {
     const errText = e?.message?.includes("No API key")
-      ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+      ? S.isCreator
+        ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+        : "(The DM cannot respond because the campaign creator hasn't configured an API key yet. Ask the creator to set it in Settings.)"
       : `(The DM's voice fades... connection lost. Try again.) ${e?.message||""}`;
     await patch(S.campaignId,{messages:[...nm,{type:"dm",text:errText,ts:Date.now()}]});
   }
