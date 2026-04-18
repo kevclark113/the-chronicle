@@ -670,7 +670,8 @@ async function createCampaign(creatorName, otherNames, theme, customPremise) {
   const id = genCode();
   const allNames = [creatorName, ...otherNames.filter(n=>n.trim())];
   const players  = allNames.map(name => ({ name, joined:name===creatorName, char:null, hp:null, maxHp:null }));
-  await setDoc(cref(id), { id, creatorName, players, theme:theme||"Classic Fantasy", customPremise:customPremise||"", phase:"char-creation", turnIndex:0, messages:[], aiHistory:[], createdAt:Date.now() });
+  const apiKey = getApiKey(); // Use the creator's API key
+  await setDoc(cref(id), { id, creatorName, players, theme:theme||"Classic Fantasy", customPremise:customPremise||"", apiKey, phase:"char-creation", turnIndex:0, messages:[], aiHistory:[], createdAt:Date.now() });
   return id;
 }
 
@@ -832,15 +833,26 @@ let serverReady = true;
 
 
 function getApiKey() {
+  // First check if the campaign has a shared API key
+  if(S.campaign?.apiKey) return S.campaign.apiKey;
+  // Fall back to localStorage
   return localStorage.getItem("chronicle_api_key")||"";
 }
 
 function saveApiKey(key) {
   localStorage.setItem("chronicle_api_key", key.trim());
+  // If this user is the creator and there's a campaign, update the campaign's API key
+  if(S.isCreator && S.campaignId) {
+    patch(S.campaignId, { apiKey: key.trim() });
+  }
 }
 
 function clearApiKey() {
   localStorage.removeItem("chronicle_api_key");
+  // If this user is the creator and there's a campaign, clear the campaign's API key
+  if(S.isCreator && S.campaignId) {
+    patch(S.campaignId, { apiKey: null });
+  }
 }
 
 // Wake lock — prevent mobile screen from sleeping during DM response
