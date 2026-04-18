@@ -2204,7 +2204,7 @@ function rPlay() {
         <button class="btn-leave" id="btn-abandon" style="opacity:.45;margin-left:.3rem">🗑 Abandon</button>
         <button class="btn-leave" id="btn-help-play" style="opacity:.55;margin-left:.3rem">📖</button>
       </header>
-      ${S.isCreator && !camp.apiKey ? `<div class="api-banner">⚠️ No API key set for this campaign. <button class="btn-sm" onclick="go('api-key')">Set API Key</button></div>` : ""}
+      ${S.isCreator && !camp.apiKey ? `<div class="api-banner">⚠️ No API key set for this campaign. <button class="btn-sm" id="btn-set-api-key">Set API Key</button></div>` : ""}
       <div class="pgrid">
         <section class="narc">
           <div class="card narc-card">
@@ -2344,6 +2344,7 @@ function rPlay() {
   const log=id("log"); if(log) log.scrollTop=log.scrollHeight;
   const bl=id("btn-leave"); if(bl) bl.onclick=()=>{ clearSession(); S.campaignId=null; S.myName=null; S.campaign=null; if(S.unsub){S.unsub();S.unsub=null;} go("landing"); };
   const bhp=id("btn-help-play"); if(bhp) bhp.onclick=()=>showHandbook();
+  const setKeyBtn=id("btn-set-api-key"); if(setKeyBtn) setKeyBtn.onclick=()=>go("api-key");
   const ba=id("btn-abandon"); if(ba) ba.onclick=()=>{
     const confirmed = confirm("Abandon this campaign? It will be removed from your recent campaigns.");
     if(!confirmed) return;
