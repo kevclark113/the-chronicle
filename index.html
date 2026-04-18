@@ -886,12 +886,12 @@ async function callDM(system, history) {
         signal: controller.signal,
       });
       clearTimeout(timeout);
-      const text = await res.text();
+      const responseText = await res.text();
       releaseWakeLock();
       let data = null;
-      try { data = JSON.parse(text); } catch(e) { }
+      try { data = JSON.parse(responseText); } catch(e) { }
       if(!res.ok) {
-        const serverMsg = data?.error ? `: ${data.error}` : text ? `: ${text}` : "";
+        const serverMsg = data?.error ? `: ${data.error}` : responseText ? `: ${responseText}` : "";
         throw new Error(`DM proxy error ${res.status} ${res.statusText}${serverMsg}`);
       }
       if(data?.error) throw new Error(data.error);
