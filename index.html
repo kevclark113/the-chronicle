@@ -874,10 +874,16 @@ async function callDM(system, history) {
         signal: controller.signal,
       });
       clearTimeout(timeout);
+      const text = await res.text();
       releaseWakeLock();
-      const data = await res.json();
-      if(data.error) throw new Error(data.error);
-      const raw  = data.content?.[0]?.text || "...";
+      let data = null;
+      try { data = JSON.parse(text); } catch(e) { }
+      if(!res.ok) {
+        const serverMsg = data?.error ? `: ${data.error}` : text ? `: ${text}` : "";
+        throw new Error(`DM proxy error ${res.status} ${res.statusText}${serverMsg}`);
+      }
+      if(data?.error) throw new Error(data.error);
+      const raw  = data?.content?.[0]?.text || "...";
   // Parse XP award
   const xpMatch = raw.match(/XP_AWARD:(\{.*?\})/);
   let xpAward = 0, xpReason = "";
@@ -2396,7 +2402,10 @@ function rPlay() {
         const dm = { type:"dm", text:txt, ts:Date.now() };
         await patch(S.campaignId, { messages:[...cleaned, dm], aiHistory:[...cleanedHist, {role:"assistant",content:txt}], turnIndex:(camp.turnIndex+1)%camp.players.length });
       } catch(e) {
-        await patch(S.campaignId, { messages:[...cleaned, {type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}] });
+        const errText = e?.message?.includes("No API key")
+          ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+          : `(The DM's voice fades... connection lost. Try again.) ${e?.message||""}`;
+        await patch(S.campaignId, { messages:[...cleaned, {type:"dm",text:errText,ts:Date.now()}] });
       }
       S.submitting = false;
     };
@@ -2503,7 +2512,10 @@ function rPlay() {
           holdTurn:dmResult.holdTurn||false
         });
       } catch(e) {
-        await patch(S.campaignId,{messages:[...msgs,{type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
+        const errText = e?.message?.includes("No API key")
+          ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+          : `(The DM's voice fades... connection lost. Try again.) ${e?.message||""}`;
+        await patch(S.campaignId,{messages:[...msgs,{type:"dm",text:errText,ts:Date.now()}]});
       }
       S.submitting=false;
     } else {
@@ -3127,7 +3139,10 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
       ...combatUpdate
     });
   } catch(e) {
-    await patch(S.campaignId,{messages:[...nm,{type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
+    const errText = e?.message?.includes("No API key")
+      ? "(The DM cannot respond because no API key is configured. Enter your Claude API key in Settings and try again.)"
+      : `(The DM's voice fades... connection lost. Try again.) ${e?.message||""}`;
+    await patch(S.campaignId,{messages:[...nm,{type:"dm",text:errText,ts:Date.now()}]});
   }
 
   S.submitting=false;
