@@ -681,22 +681,7 @@ async function fetchCamp(id) {
 
 function subscribe(id, cb) {
   return onSnapshot(cref(id), s => {
-    if(s.exists()) {
-      const data = s.data();
-      if(S.isCreator && data.messages.length > S.lastMessageCount) {
-        const lastMsg = data.messages[data.messages.length - 1];
-        if(lastMsg.type === "player" && data.players[data.turnIndex % data.players.length].name === lastMsg.who) {
-          callDM(buildSystem(data), data.aiHistory || []).then(async result => {
-            const update = processDMResult(result, data);
-            await patch(S.campaignId, update);
-          }).catch(async e => {
-            await patch(S.campaignId, {messages: [...data.messages, {type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
-          });
-        }
-      }
-      S.lastMessageCount = data.messages.length;
-      cb(data);
-    }
+    if(s.exists()) cb(s.data());
   });
 }
 
@@ -782,8 +767,9 @@ RULES:
 - This is strictly turn-based. One player acts per turn; you respond, then the next player goes.
 - Always end your response by clearly naming whose turn it is next (e.g. "What do you do, ${cur?.name}?").
 - When rolls are needed, name the player and die explicitly (e.g. "Roll a d20 for Stealth, ${cur?.name}.").
-- Determine whether the player's action requires an ability check, skill check, or saving throw. If the outcome is uncertain or depends on a character's proficiency, request a roll rather than narrating the result automatically.
-- When requesting a skill or saving throw, mention the exact skill or ability and, when possible, the full modifier from the character sheet (e.g. "Roll a d20 for Stealth (+7), Jenn." or "Roll a CON save (+3), Jenn.").
+- Determine whether the player's action requires an ability check, skill check, or saving throw. If the outcome is uncertain, especially for actions like investigate, search, examine, inspect, notice, or recall, request a roll rather than narrating the result automatically.
+- When a player says something like "investigate the scene," "search the wagon," or "examine the carving," this should usually be handled as an Investigation or Perception check. If the player is actively looking for hidden information, use Investigation; if they are noticing obvious sensory detail, use Perception.
+- When requesting a skill or saving throw, mention the exact skill or ability and, when possible, the full modifier from the character sheet (e.g. "Roll a d20 for Investigation (+7), Jenn." or "Roll a CON save (+3), Jenn.").
 - HOLD TURN: This is critical. If your response asks the current player to roll ANY die (d20, d6, etc.), you MUST append HOLD_TURN on its own line at the end. Do not narrate the outcome of the roll before they roll it — stop the narrative, ask for the roll, and append HOLD_TURN. The app will automatically send their roll result back to you so you can then narrate the outcome. Only skip HOLD_TURN when no roll is needed and the turn should pass to the next player.
   Example correct usage: "Roll a d20 for Stealth, Jenn.\nHOLD_TURN"
   Example incorrect usage: narrating success/failure before the player has rolled.
@@ -2450,7 +2436,7 @@ function rPlay() {
               {pattern:/\bpersuasion\b/, name:"Persuasion", ability:"CHA"},
               {pattern:/\bdeception\b/, name:"Deception", ability:"CHA"},
               {pattern:/\bintimidat\b/, name:"Intimidation", ability:"CHA"},
-              {pattern:/\binvestigation\b/, name:"Investigation", ability:"INT"},
+              {pattern:/\b(investigation|investigate|search|examin|inspect|scan)\b/, name:"Investigation", ability:"INT"},
               {pattern:/\barcana\b/, name:"Arcana", ability:"INT"},
               {pattern:/\bhistory\b/, name:"History", ability:"INT"},
               {pattern:/\breligion\b/, name:"Religion", ability:"INT"},
@@ -2964,7 +2950,6 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
       (char.cantrips||[]).map(c=>c.toLowerCase()).some(c=>action.toLowerCase().includes(c));
 
     if(detectedSpell && !isCantripOrNoSlots) {
-      // Show slot selection popup
       S.pendingSpell = { spell: detectedSpell, availLevels, useBonusAction };
       rPlay();
       return;
@@ -2974,7 +2959,6 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
   S.inputText=""; S.submitting=true;
   S.pendingSpell=null;
 
-  // Auto-mark action used + bonus action if used + spell slot if confirmed
   let newSheet = { ...sheet, action: true, bonusAction: useBonusAction ? true : sheet.bonusAction };
   if(confirmedSlot !== undefined && confirmedSlot !== null) {
     const used = { ...(sheet.spellSlotsUsed||{}) };
@@ -2982,7 +2966,6 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
     newSheet.spellSlotsUsed = used;
   }
 
-  // Reset next player's actions
   const nextIdx = (camp.turnIndex+1)%camp.players.length;
   const players = camp.players.map((p,i) => {
     if(p.name===S.myName) return {...p, sheet:newSheet};
@@ -2996,10 +2979,154 @@ async function submitAction(confirmedSlot, useBonusAction=false) {
   const nm=[...camp.messages,pm];
   const ue={role:"user",content:`${S.myName}: ${action}`};
   const nh=[...(camp.aiHistory||[]),ue];
+
   await patch(S.campaignId,{messages:nm,aiHistory:nh,players});
-  S.submitting=false;
+
+  try {
+    const result = await callDM(buildSystem({...camp,players}), nh);
+    const dm={type:"dm",text:result.text,ts:Date.now()};
+    const ni = nextIdx;
+
+    let updatedPlayers = [...players];
+    const hpMessages = [];
+    if(result.hpChanges && result.hpChanges.length>0) {
+      result.hpChanges.forEach(change => {
+        updatedPlayers = updatedPlayers.map(p => {
+          if(p.name.toLowerCase()!==change.name.toLowerCase()) return p;
+          const oldHp = p.hp||0;
+          const newHp = Math.max(0, Math.min(p.maxHp||oldHp, oldHp + change.delta));
+          const status = newHp===0 ? " — UNCONSCIOUS" : "";
+          hpMessages.push({
+            type:"hp",
+            text:`${p.char?.name||p.name} ${change.delta>0?"heals":"takes"} ${Math.abs(change.delta)} ${change.delta>0?"HP":"damage"} (${change.reason}) — ${newHp}/${p.maxHp||oldHp} HP${status}`,
+            ts:Date.now()+(hpMessages.length)
+          });
+          return {...p, hp:newHp};
+        });
+      });
     }
+
+    if(result.xpAward>0) {
+      updatedPlayers = updatedPlayers.map(p => {
+        const newXp = (p.xp||0)+result.xpAward;
+        const oldLevel = xpToLevel(p.xp||0);
+        const newLevel = xpToLevel(newXp);
+        if(newLevel>oldLevel) {
+          const newMaxHp = (CLASS_HP[p.char?.cls]||8)*newLevel + mod(p.char?.stats?.CON||10)*newLevel;
+          const newSlots = (SPELL_SLOTS_BY_LEVEL[p.char?.cls]||[])[newLevel-1]||{};
+          return {...p, xp:newXp, level:newLevel, maxHp:newMaxHp, hp:Math.min(p.hp||0,newMaxHp),
+            char:{...p.char, spellSlots:newSlots}, levelUpPending:true};
+        }
+        return {...p, xp:newXp};
+      });
+    }
+
+    const extraMsgs = [];
+    if(hpMessages.length>0) extraMsgs.push(...hpMessages);
+    if(result.xpAward>0) extraMsgs.push({type:"xp",text:`+${result.xpAward} XP — ${result.xpReason}`,ts:Date.now()+100});
+
+    let combatUpdate = {};
+    const initMsgs = [];
+
+    if(result.initiativeStart && result.enemyInitiatives) {
+      const order = buildInitiativeOrder(updatedPlayers, result.enemyInitiatives);
+      combatUpdate = { combat: true, initiativeOrder: order, combatTurnIdx: 0 };
+      initMsgs.push({ type:"initiative", text:`⚔ INITIATIVE — Everyone rolls for combat order!`, ts: Date.now() });
+      order.forEach((e, i) => {
+        let rollText;
+        if(e.isEnemy) {
+          rollText = `${e.name} → ${e.initiative} (enemy)`;
+        } else {
+          const modStr = e.dexMod >= 0 ? `+${e.dexMod}` : `${e.dexMod}`;
+          rollText = `${e.charName} rolls d20: ${e.d20roll} ${modStr} DEX = ${e.initiative}`;
+        }
+        initMsgs.push({ type:"initiative", text: rollText, ts: Date.now() + i + 1 });
+      });
+      initMsgs.push({ type:"initiative", text:`⚔ COMBAT BEGINS — Turn order: ${order.map(e=>e.charName||e.name).join(" → ")}`, ts: Date.now() + order.length + 2 });
+    } else if(camp.combat && result.enemyHp) {
+      const updatedOrder = (camp.initiativeOrder||[]).map(e => {
+        if(!e.isEnemy) return e;
+        const update = result.enemyHp.find(h=>h.name.toLowerCase()===e.name.toLowerCase());
+        if(update) return {...e, hp:update.hp, maxHp:update.maxHp||e.maxHp};
+        return e;
+      });
+      const livingOrder = updatedOrder.filter(e => !e.isEnemy || e.hp > 0);
+      const nextTurnIdx = camp.combatTurnIdx % Math.max(1, livingOrder.length);
+      combatUpdate = { initiativeOrder: livingOrder, combatTurnIdx: nextActiveCombatSlot(livingOrder, nextTurnIdx) };
+    } else if(camp.combat && !result.combatEnd) {
+      const order = camp.initiativeOrder||[];
+      combatUpdate = { combatTurnIdx: nextActiveCombatSlot(order, camp.combatTurnIdx||0) };
+    }
+
+    if(result.combatEnd) {
+      combatUpdate = { combat: false, initiativeOrder: [], combatTurnIdx: 0 };
+      initMsgs.push({ type:"initiative", text:"⚔ COMBAT ENDS — returning to exploration.", ts: Date.now() });
+    }
+
+    if(result.rollMod && result.rollMod.target) {
+      const targetPlayer = updatedPlayers.find(p=>p.name===result.rollMod.target);
+      if(targetPlayer) S.pendingAdvantage = result.rollMod;
+    }
+
+    if(result.concCheck) {
+      const targetPlayer = updatedPlayers.find(p=>p.name===result.concCheck.name);
+      if(targetPlayer && (targetPlayer.sheet?.concentration||"").length>0) {
+        const dc = Math.max(10, Math.floor(result.concCheck.damage/2));
+        S.pendingConCheck = { dc, damage:result.concCheck.damage, name:result.concCheck.name };
+      }
+    }
+
+    let condMsgs = [];
+    if(result.conditions && result.conditions.length > 0) {
+      const condResult = applyConditions(
+        updatedPlayers,
+        combatUpdate.initiativeOrder || camp.initiativeOrder || [],
+        result.conditions
+      );
+      updatedPlayers = condResult.updatedPlayers;
+      if(combatUpdate.initiativeOrder) combatUpdate.initiativeOrder = condResult.updatedOrder;
+      else if(camp.combat) combatUpdate.initiativeOrder = condResult.updatedOrder;
+      condMsgs = condResult.condMsgs;
+
+      if(camp.combat && combatUpdate.initiativeOrder) {
+        const curIdx = combatUpdate.combatTurnIdx ?? camp.combatTurnIdx ?? 0;
+        const curSlot = combatUpdate.initiativeOrder[curIdx % combatUpdate.initiativeOrder.length];
+        if(curSlot && shouldSkipTurn(curSlot)) {
+          combatUpdate.combatTurnIdx = nextActiveCombatSlot(combatUpdate.initiativeOrder, curIdx);
+        }
+      }
+    }
+
+    updatedPlayers = updatedPlayers.map(p => {
+      if((p.hp||0) <= 0 && !(p.conditions||[]).includes("Unconscious")) {
+        condMsgs.push({ type:"condition", text:`${p.char?.name||p.name} falls unconscious! 💀`, ts:Date.now()+condMsgs.length });
+        return {...p, conditions:[...(p.conditions||[]), "Unconscious"]};
+      }
+      if((p.hp||0) > 0 && (p.conditions||[]).includes("Unconscious")) {
+        condMsgs.push({ type:"condition", text:`${p.char?.name||p.name} regains consciousness!`, ts:Date.now()+condMsgs.length });
+        return {...p, conditions:(p.conditions||[]).filter(c=>c!=="Unconscious")};
+      }
+      return p;
+    });
+
+    const effectiveNi = result.holdTurn ? camp.turnIndex : ni;
+    if(result.holdTurn && camp.combat) {
+      combatUpdate = { ...combatUpdate, combatTurnIdx: camp.combatTurnIdx };
+    }
+    const holdMsg = result.holdTurn ? [{ type:"hold", text:`⏳ Waiting for ${S.myName} to roll...`, ts:Date.now()+999 }] : [];
+
+    await patch(S.campaignId,{
+      messages:[...nm,dm,...extraMsgs,...initMsgs,...condMsgs,...holdMsg],
+      aiHistory:[...nh,{role:"assistant",content:result.text}],
+      turnIndex:effectiveNi,
+      holdTurn:result.holdTurn||false,
+      players:updatedPlayers,
+      ...combatUpdate
+    });
+  } catch(e) {
+    await patch(S.campaignId,{messages:[...nm,{type:"dm",text:"(The DM's voice fades... connection lost. Try again.)",ts:Date.now()}]});
   }
+
   S.submitting=false;
 }
 
