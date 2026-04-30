@@ -1465,6 +1465,7 @@ function rLanding() {
                   <div class="resume-meta">${c.myName} · ${c.playerNames.join(", ")} · ${c.msgCount} messages</div>
                 </div>
                 <button class="btn-resume" data-id="${c.id}" data-name="${c.myName}">Resume →</button>
+                <button class="btn-close-campaign" data-id="${c.id}" title="Remove from list">✕</button>
               </div>`).join("")}
           </div>`;
         })()}
@@ -1476,6 +1477,15 @@ function rLanding() {
   id("b-help").onclick = () => showHandbook();
   qall(".btn-resume").forEach(btn => {
     btn.onclick = () => resumeCampaign(btn.dataset.id, btn.dataset.name);
+  });
+  qall(".btn-close-campaign").forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.id;
+      if(!confirm("Remove this campaign from your list? (This does not delete the campaign for other players.)")) return;
+      const hist = getCampaignHistory().filter(c => c.id !== id);
+      localStorage.setItem("chronicle_history", JSON.stringify(hist));
+      rLanding();
+    };
   });
 }
 
@@ -3609,6 +3619,8 @@ html,body{min-height:100%;background:#0b0704;font-family:'IM Fell English',serif
 .resume-meta{font-size:.68rem;font-style:italic;opacity:.65;margin-top:.1rem}
 .btn-resume{background:linear-gradient(135deg,var(--gold),#a8862e);border:1px solid var(--gold2);border-radius:2px;padding:.3rem .65rem;font-family:'Cinzel',serif;font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;color:var(--ink);font-weight:600;white-space:nowrap;transition:all .2s;flex-shrink:0}
 .btn-resume:hover{background:linear-gradient(135deg,var(--gold2),var(--gold));box-shadow:0 2px 8px rgba(201,168,76,.3)}
+.btn-close-campaign{background:transparent;border:1px solid var(--blood);color:var(--blood);border-radius:2px;padding:.2rem .5rem;font-family:'Cinzel',serif;font-size:.55rem;cursor:pointer;opacity:.5;transition:all .15s;margin-left:.3rem}
+.btn-close-campaign:hover{background:rgba(139,26,26,.15);opacity:1}
 
 /* ── LEVEL UP ── */
 .levelup-section{background:rgba(255,255,255,.15);border:1px solid var(--p2);border-radius:2px;padding:.8rem;margin-bottom:.8rem}
