@@ -1016,6 +1016,7 @@ function attach(id) {
     S.campaign = camp;
     S.isCreator = camp.creatorName === S.myName;
     saveCampaignToHistory(camp, S.myName);
+    console.log('[Chronicle] S.campaign.apiKey:', camp.apiKey, '| Player:', S.myName, '| IsCreator:', S.isCreator);
     routePhase();
   });
 }
